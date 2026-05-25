@@ -25,7 +25,6 @@ locals {
   )
 
   use_kms       = var.sse_algorithm == "aws:kms"
-  bucket_name   = var.bucket_name
   use_name_only = var.bucket_name != null
 }
 

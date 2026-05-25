@@ -31,7 +31,6 @@ locals {
   name_prefix   = "${var.name_prefix}-${var.environment}"
   identifier    = "${local.name_prefix}-${var.engine}"
   is_postgres   = var.engine == "postgres"
-  is_mysql      = var.engine == "mysql"
   port          = var.port != null ? var.port : (local.is_postgres ? 5432 : 3306)
   family        = var.parameter_group_family != null ? var.parameter_group_family : (local.is_postgres ? "postgres${split(".", var.engine_version)[0]}" : "mysql${join(".", slice(split(".", var.engine_version), 0, 2))}")
   is_prod       = var.environment == "prod"
