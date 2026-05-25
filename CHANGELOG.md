@@ -10,6 +10,15 @@ are explicitly called out under each release.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-25
+
+### Fixed
+
+- Drop unused `data "aws_caller_identity" "current"` from the `full-stack`
+  example. It was unreferenced and tripped `tflint`'s
+  `terraform_unused_declarations` rule, turning the v0.2.0 CI run red even
+  though `validate` / `test` / `tfsec` were all green.
+
 ## [0.2.0] - 2026-05-25
 
 ### Added
