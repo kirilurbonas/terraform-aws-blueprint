@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.40"
     }
   }
 }
@@ -39,6 +39,15 @@ module "vpc" {
 
   nat_gateway_mode = "per_az"
   enable_flow_logs = true
+
+  enable_s3_gateway_endpoint = true
+  interface_endpoints = [
+    "ecr.api",
+    "ecr.dkr",
+    "sts",
+    "logs",
+    "ec2",
+  ]
 }
 
 module "eks" {
@@ -50,15 +59,24 @@ module "eks" {
 
   kubernetes_version = var.kubernetes_version
 
-  # Cluster + nodes go into the private subnets carved by the VPC module.
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnet_ids
 
-  capacity_type    = "ON_DEMAND"
-  instance_types   = ["t3.large"]
-  desired_capacity = 2
-  min_capacity     = 1
-  max_capacity     = 4
-
   endpoint_public_access = var.endpoint_public_access
+
+  node_groups = {
+    default = {
+      capacity_type  = "ON_DEMAND"
+      instance_types = ["t3.large"]
+      desired_size   = 2
+      min_size       = 1
+      max_size       = 4
+    }
+  }
+
+  cluster_addons = {
+    vpc-cni    = {}
+    coredns    = {}
+    kube-proxy = {}
+  }
 }

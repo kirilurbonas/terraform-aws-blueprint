@@ -40,7 +40,7 @@ variable "vpc_id" {
 
 variable "subnet_ids" {
   type        = list(string)
-  description = "Subnet IDs for cluster ENIs and node group. Use private subnets in production."
+  description = "Subnet IDs for cluster ENIs and node groups. Use private subnets in production."
 
   validation {
     condition     = length(var.subnet_ids) >= 2
@@ -86,125 +86,118 @@ variable "kms_key_arn" {
   default     = null
 }
 
-###############################################################################
-# Node group
-###############################################################################
-
-variable "capacity_type" {
-  type        = string
-  description = "Node group purchase option: ON_DEMAND or SPOT."
-  default     = "ON_DEMAND"
-
-  validation {
-    condition     = contains(["ON_DEMAND", "SPOT"], var.capacity_type)
-    error_message = "capacity_type must be one of: ON_DEMAND, SPOT."
-  }
-}
-
-variable "instance_types" {
+variable "oidc_thumbprint_list" {
   type        = list(string)
-  description = "EC2 instance types for the node group. Multiple are recommended for SPOT diversification."
-  default     = ["t3.large"]
-
-  validation {
-    condition     = length(var.instance_types) > 0
-    error_message = "instance_types must contain at least one value."
-  }
+  description = "Thumbprints for the IAM OIDC provider. Default is the Amazon Root CA 1 thumbprint that backs every public EKS issuer."
+  default     = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]
 }
 
-variable "ami_type" {
+###############################################################################
+# Access entries (replaces aws-auth)
+###############################################################################
+
+variable "authentication_mode" {
   type        = string
-  description = "Node group AMI type (e.g. AL2023_x86_64_STANDARD, BOTTLEROCKET_x86_64)."
-  default     = "AL2023_x86_64_STANDARD"
-}
-
-variable "node_disk_size_gb" {
-  type        = number
-  description = "Root EBS volume size for nodes, in GiB."
-  default     = 50
+  description = "Authentication mode for the cluster. API uses access entries only; API_AND_CONFIG_MAP keeps aws-auth around as well."
+  default     = "API"
 
   validation {
-    condition     = var.node_disk_size_gb >= 20 && var.node_disk_size_gb <= 1000
-    error_message = "node_disk_size_gb must be between 20 and 1000."
+    condition     = contains(["API", "API_AND_CONFIG_MAP"], var.authentication_mode)
+    error_message = "authentication_mode must be one of: API, API_AND_CONFIG_MAP."
   }
 }
 
-variable "desired_capacity" {
-  type        = number
-  description = "Initial desired node count. Subsequent changes are ignored so Cluster Autoscaler / Karpenter can manage."
-  default     = 2
+variable "bootstrap_cluster_creator_admin_permissions" {
+  type        = bool
+  description = "Whether the IAM principal that runs terraform apply gets a built-in cluster-admin access entry."
+  default     = true
 }
 
-variable "min_capacity" {
-  type        = number
-  description = "Minimum node count."
-  default     = 1
-}
-
-variable "max_capacity" {
-  type        = number
-  description = "Maximum node count."
-  default     = 5
-}
-
-variable "node_labels" {
-  type        = map(string)
-  description = "Extra Kubernetes labels applied to every node."
+variable "access_entries" {
+  type = map(object({
+    principal_arn     = string
+    type              = optional(string, "STANDARD")
+    kubernetes_groups = optional(list(string))
+    user_name         = optional(string)
+    policy_associations = optional(list(object({
+      policy_arn = string
+      access_scope = object({
+        type       = string
+        namespaces = optional(list(string))
+      })
+    })), [])
+  }))
+  description = "Access entries to create on the cluster, keyed by a stable name. Each may include policy associations (e.g. AmazonEKSClusterAdminPolicy scoped to cluster, AmazonEKSAdminPolicy scoped to a namespace)."
   default     = {}
 }
 
-variable "node_taints" {
-  type = list(object({
-    key    = string
-    value  = string
-    effect = string
+###############################################################################
+# Node groups
+###############################################################################
+
+variable "node_groups" {
+  type = map(object({
+    capacity_type  = optional(string, "ON_DEMAND")
+    instance_types = optional(list(string), ["t3.large"])
+    ami_type       = optional(string, "AL2023_x86_64_STANDARD")
+    disk_size_gb   = optional(number, 50)
+    desired_size   = optional(number, 2)
+    min_size       = optional(number, 1)
+    max_size       = optional(number, 5)
+    labels         = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = string
+      effect = string
+    })), [])
+    enable_ssm_access  = optional(bool, true)
+    max_unavailable_pc = optional(number, 33)
   }))
-  description = "Kubernetes taints applied to every node."
-  default     = []
+  description = "Map of managed node groups, keyed by short name (e.g. system, apps, gpu). Mix ON_DEMAND/SPOT, instance families, and taints per group."
+
+  validation {
+    condition     = length(var.node_groups) > 0
+    error_message = "Define at least one node group."
+  }
 
   validation {
     condition = alltrue([
-      for t in var.node_taints :
-      contains(["NO_SCHEDULE", "NO_EXECUTE", "PREFER_NO_SCHEDULE"], t.effect)
+      for k, ng in var.node_groups : contains(["ON_DEMAND", "SPOT"], ng.capacity_type)
+    ])
+    error_message = "Each node group's capacity_type must be one of: ON_DEMAND, SPOT."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, ng in var.node_groups : length(ng.instance_types) > 0
+    ])
+    error_message = "Each node group must list at least one instance type."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, ng in var.node_groups : alltrue([
+        for t in ng.taints : contains(["NO_SCHEDULE", "NO_EXECUTE", "PREFER_NO_SCHEDULE"], t.effect)
+      ])
     ])
     error_message = "Each taint effect must be one of: NO_SCHEDULE, NO_EXECUTE, PREFER_NO_SCHEDULE."
   }
 }
 
-variable "enable_ssm_access" {
-  type        = bool
-  description = "Attach AmazonSSMManagedInstanceCore to nodes for Session Manager access."
-  default     = true
-}
-
 ###############################################################################
-# aws-auth
+# Add-ons
 ###############################################################################
 
-variable "manage_aws_auth" {
-  type        = bool
-  description = "Whether the module manages the aws-auth ConfigMap. Requires a configured kubernetes provider."
-  default     = false
-}
-
-variable "aws_auth_role_map" {
-  type = list(object({
-    rolearn  = string
-    username = string
-    groups   = list(string)
+variable "cluster_addons" {
+  type = map(object({
+    version                     = optional(string)
+    resolve_conflicts_on_create = optional(string, "OVERWRITE")
+    resolve_conflicts_on_update = optional(string, "OVERWRITE")
+    service_account_role_arn    = optional(string)
+    configuration_values        = optional(string)
   }))
-  description = "Additional IAM roles to map into Kubernetes RBAC. The node role is always mapped automatically."
-  default     = []
-}
-
-variable "aws_auth_user_map" {
-  type = list(object({
-    userarn  = string
-    username = string
-    groups   = list(string)
-  }))
-  description = "IAM users to map into Kubernetes RBAC."
-  default     = []
+  description = "Managed EKS add-ons, keyed by add-on name (vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver, ...). Empty = none. Versions default to latest compatible when omitted."
+  default     = {}
 }
 
 variable "tags" {

@@ -4,15 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = ">= 4.0"
-    }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = ">= 2.20"
+      version = ">= 5.40"
     }
   }
 }
@@ -34,6 +26,23 @@ locals {
 
   name_prefix  = "${var.name_prefix}-${var.environment}"
   cluster_name = "${local.name_prefix}-eks"
+
+  # Build a normalized map of node groups so we can for_each over it deterministically.
+  node_groups = {
+    for k, ng in var.node_groups : k => merge({
+      capacity_type      = "ON_DEMAND"
+      instance_types     = ["t3.large"]
+      ami_type           = "AL2023_x86_64_STANDARD"
+      disk_size_gb       = 50
+      desired_size       = 2
+      min_size           = 1
+      max_size           = 5
+      labels             = {}
+      taints             = []
+      enable_ssm_access  = true
+      max_unavailable_pc = 33
+    }, ng)
+  }
 }
 
 ###############################################################################
@@ -84,24 +93,28 @@ resource "aws_security_group" "cluster" {
   }
 }
 
-resource "aws_security_group_rule" "cluster_egress_all" {
-  type              = "egress"
-  description       = "Allow control plane to reach AWS APIs and nodes"
+resource "aws_vpc_security_group_egress_rule" "cluster_all" {
   security_group_id = aws_security_group.cluster.id
-  protocol          = "-1"
-  from_port         = 0
-  to_port           = 0
-  cidr_blocks       = ["0.0.0.0/0"]
+  description       = "Allow control plane to reach AWS APIs and nodes"
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-eks-cluster-egress-all"
+  })
 }
 
-resource "aws_security_group_rule" "cluster_ingress_from_nodes" {
-  type                     = "ingress"
-  description              = "Allow worker nodes to talk to the API server"
-  security_group_id        = aws_security_group.cluster.id
-  source_security_group_id = aws_security_group.nodes.id
-  protocol                 = "tcp"
-  from_port                = 443
-  to_port                  = 443
+resource "aws_vpc_security_group_ingress_rule" "cluster_from_nodes" {
+  security_group_id            = aws_security_group.cluster.id
+  description                  = "Allow worker nodes to talk to the API server"
+  referenced_security_group_id = aws_security_group.nodes.id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-eks-cluster-ingress-nodes"
+  })
 }
 
 ###############################################################################
@@ -123,44 +136,52 @@ resource "aws_security_group" "nodes" {
   }
 }
 
-resource "aws_security_group_rule" "nodes_egress_all" {
-  type              = "egress"
+resource "aws_vpc_security_group_egress_rule" "nodes_all" {
+  security_group_id = aws_security_group.nodes.id
   description       = "Allow nodes to reach the internet (image pulls, AWS APIs)"
-  security_group_id = aws_security_group.nodes.id
-  protocol          = "-1"
-  from_port         = 0
-  to_port           = 0
-  cidr_blocks       = ["0.0.0.0/0"]
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-eks-nodes-egress-all"
+  })
 }
 
-resource "aws_security_group_rule" "nodes_ingress_self" {
-  type              = "ingress"
-  description       = "Pod-to-pod traffic within the cluster"
-  security_group_id = aws_security_group.nodes.id
-  protocol          = "-1"
-  from_port         = 0
-  to_port           = 0
-  self              = true
+resource "aws_vpc_security_group_ingress_rule" "nodes_self" {
+  security_group_id            = aws_security_group.nodes.id
+  description                  = "Pod-to-pod traffic within the cluster"
+  referenced_security_group_id = aws_security_group.nodes.id
+  ip_protocol                  = "-1"
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-eks-nodes-ingress-self"
+  })
 }
 
-resource "aws_security_group_rule" "nodes_ingress_from_cluster" {
-  type                     = "ingress"
-  description              = "Kubelet & extension API server traffic from control plane"
-  security_group_id        = aws_security_group.nodes.id
-  source_security_group_id = aws_security_group.cluster.id
-  protocol                 = "tcp"
-  from_port                = 1025
-  to_port                  = 65535
+resource "aws_vpc_security_group_ingress_rule" "nodes_kubelet" {
+  security_group_id            = aws_security_group.nodes.id
+  description                  = "Kubelet & extension API server traffic from control plane"
+  referenced_security_group_id = aws_security_group.cluster.id
+  ip_protocol                  = "tcp"
+  from_port                    = 1025
+  to_port                      = 65535
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-eks-nodes-ingress-kubelet"
+  })
 }
 
-resource "aws_security_group_rule" "nodes_ingress_https_from_cluster" {
-  type                     = "ingress"
-  description              = "HTTPS from control plane to nodes (webhooks)"
-  security_group_id        = aws_security_group.nodes.id
-  source_security_group_id = aws_security_group.cluster.id
-  protocol                 = "tcp"
-  from_port                = 443
-  to_port                  = 443
+resource "aws_vpc_security_group_ingress_rule" "nodes_webhooks" {
+  security_group_id            = aws_security_group.nodes.id
+  description                  = "HTTPS from control plane to nodes (webhooks)"
+  referenced_security_group_id = aws_security_group.cluster.id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-eks-nodes-ingress-webhooks"
+  })
 }
 
 ###############################################################################
@@ -171,6 +192,15 @@ resource "aws_eks_cluster" "this" {
   name     = local.cluster_name
   role_arn = aws_iam_role.cluster.arn
   version  = var.kubernetes_version
+
+  # Access Entries replace the legacy aws-auth ConfigMap.
+  # API_AND_CONFIG_MAP keeps the door open for in-cluster bootstrap aws-auth
+  # entries that some Helm charts still write; flip to API once you're sure
+  # nothing else writes to aws-auth.
+  access_config {
+    authentication_mode                         = var.authentication_mode
+    bootstrap_cluster_creator_admin_permissions = var.bootstrap_cluster_creator_admin_permissions
+  }
 
   vpc_config {
     subnet_ids              = var.subnet_ids
@@ -233,16 +263,17 @@ resource "aws_kms_alias" "eks" {
 
 ###############################################################################
 # OIDC provider for IRSA
+#
+# AWS publishes a stable Amazon Root CA thumbprint that EKS uses for every
+# cluster. We pin it as a literal here instead of dialling the issuer with the
+# tls provider at plan time (which is fragile for private clusters and
+# triggers replacements on cert rotation).
 ###############################################################################
-
-data "tls_certificate" "oidc" {
-  url = aws_eks_cluster.this.identity[0].oidc[0].issuer
-}
 
 resource "aws_iam_openid_connect_provider" "this" {
   url             = aws_eks_cluster.this.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.oidc.certificates[0].sha1_fingerprint]
+  thumbprint_list = var.oidc_thumbprint_list
 
   tags = merge(local.common_tags, {
     Name = "${local.cluster_name}-oidc"
@@ -290,46 +321,115 @@ resource "aws_iam_role_policy_attachment" "node_ecr" {
 }
 
 resource "aws_iam_role_policy_attachment" "node_ssm" {
-  count = var.enable_ssm_access ? 1 : 0
+  for_each = { for k, ng in local.node_groups : k => ng if ng.enable_ssm_access }
 
+  # Same managed policy attached once per node group that requests it. The
+  # underlying role is shared, so AWS dedupes — for_each is purely to keep
+  # Terraform's resource graph happy.
   role       = aws_iam_role.node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 ###############################################################################
-# Managed node group
+# Node launch template — pins IMDSv2 and tags every node ENI / volume
+###############################################################################
+
+resource "aws_launch_template" "node" {
+  for_each = local.node_groups
+
+  name_prefix            = "${local.cluster_name}-${each.key}-"
+  description            = "Launch template for EKS node group ${each.key}"
+  update_default_version = true
+
+  vpc_security_group_ids = [aws_security_group.nodes.id]
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2 # 2 hops so pods using IRSA can still reach IMDS via the host
+    instance_metadata_tags      = "enabled"
+  }
+
+  monitoring {
+    enabled = true
+  }
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_size           = each.value.disk_size_gb
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = merge(local.common_tags, {
+      Name      = "${local.cluster_name}-${each.key}-node"
+      NodeGroup = each.key
+    })
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = merge(local.common_tags, {
+      Name      = "${local.cluster_name}-${each.key}-vol"
+      NodeGroup = each.key
+    })
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.cluster_name}-${each.key}-lt"
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+###############################################################################
+# Managed node groups
 ###############################################################################
 
 resource "aws_eks_node_group" "this" {
+  for_each = local.node_groups
+
   cluster_name    = aws_eks_cluster.this.name
-  node_group_name = "${local.cluster_name}-ng"
+  node_group_name = "${local.cluster_name}-${each.key}"
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = var.subnet_ids
 
-  capacity_type  = var.capacity_type
-  instance_types = var.instance_types
-  disk_size      = var.node_disk_size_gb
-  ami_type       = var.ami_type
+  capacity_type  = each.value.capacity_type
+  instance_types = each.value.instance_types
+  ami_type       = each.value.ami_type
+
+  launch_template {
+    id      = aws_launch_template.node[each.key].id
+    version = aws_launch_template.node[each.key].latest_version
+  }
 
   scaling_config {
-    desired_size = var.desired_capacity
-    min_size     = var.min_capacity
-    max_size     = var.max_capacity
+    desired_size = each.value.desired_size
+    min_size     = each.value.min_size
+    max_size     = each.value.max_size
   }
 
   update_config {
-    max_unavailable_percentage = 33
+    max_unavailable_percentage = each.value.max_unavailable_pc
   }
 
   labels = merge(
     {
-      "capacity-type" = lower(var.capacity_type)
+      "capacity-type" = lower(each.value.capacity_type)
+      "node-group"    = each.key
     },
-    var.node_labels,
+    each.value.labels,
   )
 
   dynamic "taint" {
-    for_each = var.node_taints
+    for_each = each.value.taints
     content {
       key    = taint.value.key
       value  = taint.value.value
@@ -338,7 +438,8 @@ resource "aws_eks_node_group" "this" {
   }
 
   tags = merge(local.common_tags, {
-    Name                                          = "${local.cluster_name}-ng"
+    Name                                          = "${local.cluster_name}-${each.key}"
+    NodeGroup                                     = each.key
     "kubernetes.io/cluster/${local.cluster_name}" = "owned"
   })
 
@@ -349,38 +450,88 @@ resource "aws_eks_node_group" "this" {
   ]
 
   lifecycle {
+    # Let Cluster Autoscaler / Karpenter own desired_size at runtime.
     ignore_changes = [scaling_config[0].desired_size]
   }
 }
 
 ###############################################################################
-# aws-auth ConfigMap (optional)
-#
-# When `manage_aws_auth = true`, callers must configure the kubernetes provider
-# against this cluster (typically via aws_eks_cluster_auth + a provider alias).
+# Managed cluster add-ons
 ###############################################################################
 
-resource "kubernetes_config_map_v1_data" "aws_auth" {
-  count = var.manage_aws_auth ? 1 : 0
+resource "aws_eks_addon" "this" {
+  for_each = var.cluster_addons
 
-  metadata {
-    name      = "aws-auth"
-    namespace = "kube-system"
-  }
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = each.key
+  addon_version               = lookup(each.value, "version", null)
+  resolve_conflicts_on_create = lookup(each.value, "resolve_conflicts_on_create", "OVERWRITE")
+  resolve_conflicts_on_update = lookup(each.value, "resolve_conflicts_on_update", "OVERWRITE")
+  service_account_role_arn    = lookup(each.value, "service_account_role_arn", null)
+  configuration_values        = lookup(each.value, "configuration_values", null)
 
-  data = {
-    mapRoles = yamlencode(concat(
-      [{
-        rolearn  = aws_iam_role.node.arn
-        username = "system:node:{{EC2PrivateDNSName}}"
-        groups   = ["system:bootstrappers", "system:nodes"]
-      }],
-      var.aws_auth_role_map,
-    ))
-    mapUsers = yamlencode(var.aws_auth_user_map)
-  }
+  tags = merge(local.common_tags, {
+    Name  = "${local.cluster_name}-addon-${each.key}"
+    Addon = each.key
+  })
 
-  force = true
-
+  # Addons that schedule on nodes (vpc-cni excepted) need a node group ready.
   depends_on = [aws_eks_node_group.this]
+}
+
+###############################################################################
+# Access Entries — replaces the aws-auth ConfigMap
+###############################################################################
+
+# Always grant the node role node permissions via the dedicated EC2-Linux entry
+# type. This avoids the chicken-and-egg of the legacy ConfigMap.
+resource "aws_eks_access_entry" "node" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = aws_iam_role.node.arn
+  type          = "EC2_LINUX"
+
+  tags = merge(local.common_tags, {
+    Name = "${local.cluster_name}-access-node"
+  })
+}
+
+resource "aws_eks_access_entry" "extra" {
+  for_each = var.access_entries
+
+  cluster_name      = aws_eks_cluster.this.name
+  principal_arn     = each.value.principal_arn
+  type              = lookup(each.value, "type", "STANDARD")
+  kubernetes_groups = lookup(each.value, "kubernetes_groups", null)
+  user_name         = lookup(each.value, "user_name", null)
+
+  tags = merge(local.common_tags, {
+    Name = "${local.cluster_name}-access-${each.key}"
+  })
+}
+
+resource "aws_eks_access_policy_association" "extra" {
+  for_each = {
+    for pair in flatten([
+      for k, entry in var.access_entries : [
+        for p in lookup(entry, "policy_associations", []) : {
+          key           = "${k}:${p.policy_arn}"
+          entry_key     = k
+          policy_arn    = p.policy_arn
+          access_scope  = p.access_scope
+          principal_arn = entry.principal_arn
+        }
+      ]
+    ]) : pair.key => pair
+  }
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value.principal_arn
+  policy_arn    = each.value.policy_arn
+
+  access_scope {
+    type       = each.value.access_scope.type
+    namespaces = lookup(each.value.access_scope, "namespaces", null)
+  }
+
+  depends_on = [aws_eks_access_entry.extra]
 }

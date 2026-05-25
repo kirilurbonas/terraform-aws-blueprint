@@ -58,3 +58,13 @@ output "parameter_group_name" {
   description = "Name of the parameter group."
   value       = aws_db_parameter_group.this.name
 }
+
+output "read_replica_endpoints" {
+  description = "Map of replica name -> connection endpoint."
+  value       = { for k, r in aws_db_instance.replica : k => r.endpoint }
+}
+
+output "read_replica_ids" {
+  description = "Map of replica name -> RDS instance identifier."
+  value       = { for k, r in aws_db_instance.replica : k => r.id }
+}

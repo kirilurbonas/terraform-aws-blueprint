@@ -1,0 +1,63 @@
+---
+name: Bug report
+description: Something in a module misbehaves or doesn't match the docs.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      options:
+        - vpc
+        - eks
+        - rds
+        - iam-roles
+        - s3-secure
+        - kms
+        - state-backend
+        - example
+        - other (root / CI / docs)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Module version (git tag or commit SHA)
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: input
+    id: terraform
+    attributes:
+      label: Terraform version
+      placeholder: 1.9.5
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: AWS provider version
+      placeholder: 5.65.0
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Plan / apply output, error messages, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A short `module {}` block + variables that triggers the bug.
+      render: hcl
+    validations:
+      required: true

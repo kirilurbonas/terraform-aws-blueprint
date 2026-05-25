@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.40"
     }
   }
 }
@@ -23,13 +23,15 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   azs         = slice(data.aws_availability_zones.available.names, 0, 3)
   name_prefix = "blueprint"
 }
 
 ###############################################################################
-# Networking
+# Networking — VPC endpoints save NAT egress for ECR pulls and add resilience
 ###############################################################################
 
 module "vpc" {
@@ -44,10 +46,27 @@ module "vpc" {
 
   nat_gateway_mode = "per_az"
   enable_flow_logs = true
+
+  enable_s3_gateway_endpoint = true
+  interface_endpoints        = ["ecr.api", "ecr.dkr", "sts", "logs", "ec2"]
 }
 
 ###############################################################################
-# EKS
+# Shared KMS key for application-level encryption
+###############################################################################
+
+module "app_kms" {
+  source = "../../modules/kms"
+
+  environment = var.environment
+  project     = var.project
+  alias       = "${local.name_prefix}-${var.environment}-app"
+  description = "Application-level encryption key (S3, Secrets)"
+}
+
+###############################################################################
+# EKS — three node groups: system (small ON_DEMAND), apps (mixed SPOT), and a
+# managed-add-on baseline so the cluster actually has CNI / DNS / kube-proxy.
 ###############################################################################
 
 module "eks" {
@@ -62,17 +81,39 @@ module "eks" {
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnet_ids
 
-  capacity_type    = "ON_DEMAND"
-  instance_types   = ["m6i.large", "m6a.large"]
-  desired_capacity = 3
-  min_capacity     = 3
-  max_capacity     = 9
-
   endpoint_public_access = false
+
+  node_groups = {
+    system = {
+      capacity_type  = "ON_DEMAND"
+      instance_types = ["m6i.large"]
+      desired_size   = 2
+      min_size       = 2
+      max_size       = 4
+      labels         = { workload = "system" }
+      taints = [
+        { key = "CriticalAddonsOnly", value = "true", effect = "NO_SCHEDULE" },
+      ]
+    }
+    apps = {
+      capacity_type  = "SPOT"
+      instance_types = ["m6i.large", "m6a.large", "m5.large", "m5a.large"]
+      desired_size   = 3
+      min_size       = 3
+      max_size       = 12
+      labels         = { workload = "apps" }
+    }
+  }
+
+  cluster_addons = {
+    vpc-cni    = {}
+    coredns    = {}
+    kube-proxy = {}
+  }
 }
 
 ###############################################################################
-# RDS — locked down to the EKS node security group
+# RDS — locked down to the EKS node security group, KMS-encrypted, one replica
 ###############################################################################
 
 module "rds" {
@@ -88,6 +129,7 @@ module "rds" {
 
   db_name         = "appdb"
   master_username = "appadmin"
+  kms_key_arn     = module.app_kms.key_arn
 
   vpc_id                     = module.vpc.vpc_id
   subnet_ids                 = module.vpc.private_subnet_ids
@@ -98,10 +140,14 @@ module "rds" {
   max_allocated_storage_gb = 500
   backup_retention_days    = 14
   deletion_protection      = true
+
+  read_replicas = {
+    ro = { instance_class = "db.m6i.large" }
+  }
 }
 
 ###############################################################################
-# Secure S3 bucket for application artifacts
+# Secure S3 bucket for application artifacts, encrypted with the same KMS key
 ###############################################################################
 
 module "artifacts_bucket" {
@@ -111,16 +157,15 @@ module "artifacts_bucket" {
   project            = var.project
   bucket_name_prefix = "${local.name_prefix}-${var.environment}-artifacts-"
 
-  sse_algorithm = "AES256"
+  sse_algorithm = "aws:kms"
+  kms_key_arn   = module.app_kms.key_arn
 
   transition_to_ia_days              = 30
   transition_to_glacier_days         = 180
   expiration_days                    = 730
   noncurrent_version_expiration_days = 90
 
-  tags = {
-    Purpose = "application-artifacts"
-  }
+  tags = { Purpose = "application-artifacts" }
 }
 
 ###############################################################################
@@ -146,6 +191,13 @@ data "aws_iam_policy_document" "app_artifacts_access" {
     effect    = "Allow"
     actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
     resources = [module.artifacts_bucket.bucket_arn]
+  }
+
+  statement {
+    sid       = "AppKmsUse"
+    effect    = "Allow"
+    actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+    resources = [module.app_kms.key_arn]
   }
 }
 

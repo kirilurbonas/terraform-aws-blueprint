@@ -250,6 +250,19 @@ variable "monitoring_interval" {
   }
 }
 
+###############################################################################
+# Read replicas
+###############################################################################
+
+variable "read_replicas" {
+  type = map(object({
+    instance_class = optional(string)
+    multi_az       = optional(bool, false)
+  }))
+  description = "Map of read replicas to create, keyed by short name. Each replica inherits storage, parameter group, and SG from the primary; instance_class defaults to the primary's class when null."
+  default     = {}
+}
+
 variable "tags" {
   type        = map(string)
   description = "Additional tags merged onto every resource."

@@ -43,18 +43,18 @@ output "oidc_provider_arn" {
   value       = aws_iam_openid_connect_provider.this.arn
 }
 
-output "node_group_arn" {
-  description = "ARN of the managed node group."
-  value       = aws_eks_node_group.this.arn
-}
-
-output "node_group_name" {
-  description = "Name of the managed node group."
-  value       = aws_eks_node_group.this.node_group_name
+output "node_groups" {
+  description = "Map of node group name -> { arn, status } for every managed node group."
+  value = {
+    for k, ng in aws_eks_node_group.this : k => {
+      arn    = ng.arn
+      status = ng.status
+    }
+  }
 }
 
 output "node_iam_role_arn" {
-  description = "ARN of the IAM role assumed by worker nodes. Use this in aws-auth role mappings."
+  description = "ARN of the IAM role assumed by worker nodes. Use this in access entries and IRSA trust policies that need to recognize node identity."
   value       = aws_iam_role.node.arn
 }
 
@@ -66,6 +66,11 @@ output "node_security_group_id" {
 output "kms_key_arn" {
   description = "KMS key ARN used for secrets envelope encryption."
   value       = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.eks[0].arn
+}
+
+output "addon_versions" {
+  description = "Map of installed add-on name -> resolved version."
+  value       = { for k, a in aws_eks_addon.this : k => a.addon_version }
 }
 
 output "kubeconfig_command" {

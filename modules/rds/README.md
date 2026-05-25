@@ -79,6 +79,7 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | `performance_insights_enabled` | `bool` | `true` | no | Performance Insights. |
 | `performance_insights_retention_days` | `number` | `7` | no | PI retention. |
 | `monitoring_interval` | `number` | `60` | no | Enhanced Monitoring seconds. |
+| `read_replicas` | `map(object)` | `{}` | no | Read replicas keyed by short name; each takes optional `instance_class` and `multi_az`. |
 | `tags` | `map(string)` | `{}` | no | Extra tags. |
 
 ## Outputs
@@ -97,3 +98,9 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | `security_group_id` | DB security group ID. |
 | `db_subnet_group_name` | Subnet group name. |
 | `parameter_group_name` | Parameter group name. |
+| `read_replica_endpoints` | Map of replica name → connection endpoint. |
+| `read_replica_ids` | Map of replica name → RDS instance identifier. |
+
+<!-- BEGIN_TF_DOCS -->
+<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
+<!-- END_TF_DOCS -->

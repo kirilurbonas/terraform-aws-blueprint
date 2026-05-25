@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.40"
     }
     random = {
       source  = "hashicorp/random"
@@ -35,6 +35,7 @@ locals {
   family        = var.parameter_group_family != null ? var.parameter_group_family : (local.is_postgres ? "postgres${split(".", var.engine_version)[0]}" : "mysql${join(".", slice(split(".", var.engine_version), 0, 2))}")
   is_prod       = var.environment == "prod"
   master_secret = random_password.master.result
+
   default_params = local.is_postgres ? [
     { name = "log_min_duration_statement", value = "1000" },
     { name = "log_connections", value = "1" },
@@ -111,28 +112,34 @@ resource "aws_security_group" "this" {
   }
 }
 
-resource "aws_security_group_rule" "ingress_cidr" {
-  count = length(var.allowed_cidr_blocks) > 0 ? 1 : 0
+resource "aws_vpc_security_group_ingress_rule" "from_cidr" {
+  for_each = toset(var.allowed_cidr_blocks)
 
-  type              = "ingress"
-  description       = "DB ingress from caller-provided CIDR ranges"
   security_group_id = aws_security_group.this.id
-  protocol          = "tcp"
+  description       = "DB ingress from caller-provided CIDR ${each.value}"
+  ip_protocol       = "tcp"
   from_port         = local.port
   to_port           = local.port
-  cidr_blocks       = var.allowed_cidr_blocks
+  cidr_ipv4         = each.value
+
+  tags = merge(local.common_tags, {
+    Name = "${local.identifier}-ingress-cidr"
+  })
 }
 
-resource "aws_security_group_rule" "ingress_sg" {
+resource "aws_vpc_security_group_ingress_rule" "from_sg" {
   for_each = toset(var.allowed_security_group_ids)
 
-  type                     = "ingress"
-  description              = "DB ingress from caller-provided security group ${each.value}"
-  security_group_id        = aws_security_group.this.id
-  source_security_group_id = each.value
-  protocol                 = "tcp"
-  from_port                = local.port
-  to_port                  = local.port
+  security_group_id            = aws_security_group.this.id
+  description                  = "DB ingress from caller-provided SG ${each.value}"
+  referenced_security_group_id = each.value
+  ip_protocol                  = "tcp"
+  from_port                    = local.port
+  to_port                      = local.port
+
+  tags = merge(local.common_tags, {
+    Name = "${local.identifier}-ingress-sg"
+  })
 }
 
 ###############################################################################
@@ -197,7 +204,7 @@ resource "aws_iam_role_policy_attachment" "monitoring" {
 }
 
 ###############################################################################
-# DB instance
+# Primary DB instance
 ###############################################################################
 
 resource "aws_db_instance" "this" {
@@ -225,13 +232,16 @@ resource "aws_db_instance" "this" {
 
   multi_az = var.multi_az
 
-  backup_retention_period   = var.backup_retention_days
-  backup_window             = var.backup_window
-  maintenance_window        = var.maintenance_window
-  copy_tags_to_snapshot     = true
-  delete_automated_backups  = !local.is_prod
+  backup_retention_period  = var.backup_retention_days
+  backup_window            = var.backup_window
+  maintenance_window       = var.maintenance_window
+  copy_tags_to_snapshot    = true
+  delete_automated_backups = !local.is_prod
+
+  # Deterministic ID prevents the timestamp()-induced perpetual diff.
+  # The snapshot is only consulted when the instance is actually destroyed.
   skip_final_snapshot       = !local.is_prod
-  final_snapshot_identifier = local.is_prod ? "${local.identifier}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}" : null
+  final_snapshot_identifier = local.is_prod ? "${local.identifier}-final" : null
   deletion_protection       = var.deletion_protection
 
   performance_insights_enabled          = var.performance_insights_enabled
@@ -248,11 +258,47 @@ resource "aws_db_instance" "this" {
 
   tags = merge(local.common_tags, {
     Name = local.identifier
+    Role = "primary"
   })
+}
 
-  lifecycle {
-    ignore_changes        = [final_snapshot_identifier]
-    prevent_destroy       = false # NOTE: callers using environment="prod" should override via override.tf if they want hard protection beyond deletion_protection.
-    create_before_destroy = false
-  }
+###############################################################################
+# Read replicas
+#
+# Each replica is created via the cross-region-capable replicate_source_db
+# field. Storage and credential settings are inherited from the primary, so
+# only the differentiated knobs are exposed.
+###############################################################################
+
+resource "aws_db_instance" "replica" {
+  for_each = var.read_replicas
+
+  identifier = "${local.identifier}-replica-${each.key}"
+
+  replicate_source_db = aws_db_instance.this.arn
+  instance_class      = coalesce(each.value.instance_class, var.instance_class)
+
+  storage_encrypted = var.storage_encrypted
+  kms_key_id        = var.storage_encrypted ? var.kms_key_arn : null
+
+  publicly_accessible    = false
+  vpc_security_group_ids = [aws_security_group.this.id]
+  parameter_group_name   = aws_db_parameter_group.this.name
+
+  multi_az = lookup(each.value, "multi_az", false)
+
+  performance_insights_enabled          = var.performance_insights_enabled
+  performance_insights_retention_period = var.performance_insights_enabled ? var.performance_insights_retention_days : null
+
+  monitoring_interval = var.monitoring_interval
+  monitoring_role_arn = var.monitoring_interval > 0 ? aws_iam_role.monitoring[0].arn : null
+
+  skip_final_snapshot = true
+  apply_immediately   = !local.is_prod
+
+  tags = merge(local.common_tags, {
+    Name    = "${local.identifier}-replica-${each.key}"
+    Role    = "replica"
+    Replica = each.key
+  })
 }

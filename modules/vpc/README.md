@@ -51,6 +51,8 @@ module "vpc" {
 | `enable_flow_logs` | `bool` | `true` | no | Enable VPC Flow Logs to S3. |
 | `flow_logs_s3_bucket_arn` | `string` | `null` | no | Pre-existing bucket ARN; else module-managed. |
 | `flow_logs_retention_days` | `number` | `365` | no | Days before flow log objects expire. |
+| `enable_s3_gateway_endpoint` | `bool` | `true` | no | S3 gateway endpoint on the private route tables (free, saves NAT egress). |
+| `interface_endpoints` | `list(string)` | `[]` | no | AWS service short names (e.g. `ecr.api`, `sts`) to expose as interface endpoints in private subnets. |
 | `tags` | `map(string)` | `{}` | no | Extra tags merged onto all resources. |
 
 ## Outputs
@@ -71,3 +73,9 @@ module "vpc" {
 | `private_route_table_ids` | Private route table IDs (per AZ). |
 | `flow_logs_bucket_arn` | Module-managed flow log bucket ARN, if any. |
 | `availability_zones` | AZs the module deployed into. |
+| `s3_gateway_endpoint_id` | ID of the S3 gateway endpoint, or `null` when disabled. |
+| `interface_endpoint_ids` | Map of interface endpoint service short name → endpoint ID. |
+
+<!-- BEGIN_TF_DOCS -->
+<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
+<!-- END_TF_DOCS -->

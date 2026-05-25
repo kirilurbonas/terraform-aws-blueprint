@@ -260,3 +260,72 @@ resource "aws_flow_log" "this" {
     Name = "${local.name_prefix}-vpc-flow-logs"
   })
 }
+
+###############################################################################
+# VPC Endpoints
+#
+# S3 gateway endpoint is free and saves NAT egress for ECR image pulls and any
+# other S3 traffic. Interface endpoints are billed per-AZ + per-GB but cheaper
+# than NAT for chatty services (ECR, STS, Logs, EC2).
+###############################################################################
+
+resource "aws_security_group" "vpc_endpoints" {
+  count = length(var.interface_endpoints) > 0 ? 1 : 0
+
+  name_prefix = "${local.name_prefix}-vpce-"
+  description = "Security group for VPC interface endpoints"
+  vpc_id      = aws_vpc.this.id
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-vpce-sg"
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "vpc_endpoints_https" {
+  count = length(var.interface_endpoints) > 0 ? 1 : 0
+
+  security_group_id = aws_security_group.vpc_endpoints[0].id
+  description       = "HTTPS from anywhere inside the VPC"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  cidr_ipv4         = aws_vpc.this.cidr_block
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-vpce-ingress"
+  })
+}
+
+resource "aws_vpc_endpoint" "s3_gateway" {
+  count = var.enable_s3_gateway_endpoint ? 1 : 0
+
+  vpc_id            = aws_vpc.this.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = aws_route_table.private[*].id
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-vpce-s3"
+  })
+}
+
+resource "aws_vpc_endpoint" "interface" {
+  for_each = toset(var.interface_endpoints)
+
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.${each.value}"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-vpce-${each.value}"
+  })
+}
+
+data "aws_region" "current" {}

@@ -1,0 +1,40 @@
+---
+name: Feature request
+description: Propose a new capability or option.
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module the feature lives in
+      options:
+        - vpc
+        - eks
+        - rds
+        - iam-roles
+        - s3-secure
+        - kms
+        - state-backend
+        - new module (please describe)
+        - other (root / CI / docs)
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem this solves
+      description: What can't you do today, and why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed interface
+      description: A sketch of the new variable(s) / output(s), or a small example block.
+      render: hcl
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

@@ -55,3 +55,22 @@ kubectl annotate sa app -n app \
 The RDS master password is in Secrets Manager — read the ARN from
 `rds_master_secret_arn` and fetch it from the application via
 `secretsmanager:GetSecretValue` (grant via a second IRSA binding when needed).
+
+## Approximate monthly cost
+
+| Item | Cost (us-east-1) |
+|------|------------------|
+| EKS control plane | $73 |
+| 3 NAT gateways (per-AZ) | ~$96 |
+| 2 × m6i.large system nodes (on-demand) | ~$140 |
+| 3 × m6i.large apps nodes (spot) | ~$70 |
+| RDS Postgres db.m6i.large (Multi-AZ) | ~$420 |
+| RDS read replica db.m6i.large | ~$210 |
+| 5 interface endpoints × 3 AZs | ~$32 |
+| KMS, S3, Secrets Manager, EBS, logs | ~$20 |
+| **Total** | **~$1060/mo + traffic** |
+
+This is the **reference deployment** for what a production stack looks like.
+For an iterative dev environment, drop the read replica, switch RDS to
+`multi_az = false`, scale node groups down, and set `nat_gateway_mode =
+"single"`. Run `terraform destroy` when done.

@@ -79,3 +79,7 @@ module "platform_roles" {
 | `eks_node_role_arn` / `_name` | EKS node role. |
 | `irsa_role_arn` / `_name` | IRSA role. |
 | `ci_deployer_role_arn` / `_name` | CI deployer role. |
+
+<!-- BEGIN_TF_DOCS -->
+<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
+<!-- END_TF_DOCS -->

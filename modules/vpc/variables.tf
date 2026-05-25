@@ -28,13 +28,12 @@ variable "vpc_cidr" {
   description = "CIDR block for the VPC. Must be a valid IPv4 CIDR with prefix length /16 - /24."
 
   validation {
-    condition     = can(cidrnetmask(var.vpc_cidr))
-    error_message = "vpc_cidr must be a valid IPv4 CIDR (e.g. 10.0.0.0/16)."
-  }
-
-  validation {
-    condition     = tonumber(split("/", var.vpc_cidr)[1]) >= 16 && tonumber(split("/", var.vpc_cidr)[1]) <= 24
-    error_message = "vpc_cidr prefix length must be between /16 and /24."
+    condition = (
+      can(cidrnetmask(var.vpc_cidr)) &&
+      try(tonumber(split("/", var.vpc_cidr)[1]) >= 16, false) &&
+      try(tonumber(split("/", var.vpc_cidr)[1]) <= 24, false)
+    )
+    error_message = "vpc_cidr must be a valid IPv4 CIDR with prefix length /16 - /24 (e.g. 10.0.0.0/16)."
   }
 }
 
@@ -90,6 +89,27 @@ variable "flow_logs_retention_days" {
   validation {
     condition     = var.flow_logs_retention_days >= 1 && var.flow_logs_retention_days <= 3650
     error_message = "flow_logs_retention_days must be between 1 and 3650."
+  }
+}
+
+###############################################################################
+# VPC Endpoints
+###############################################################################
+
+variable "enable_s3_gateway_endpoint" {
+  type        = bool
+  description = "Provision a gateway endpoint for S3 (free, attaches to private route tables, saves NAT egress)."
+  default     = true
+}
+
+variable "interface_endpoints" {
+  type        = list(string)
+  description = "Service short names (e.g. ecr.api, ecr.dkr, sts, logs, ec2) to expose as interface endpoints in the private subnets. Each one costs per-AZ + per-GB but is cheaper than NAT for chatty workloads."
+  default     = []
+
+  validation {
+    condition     = length(var.interface_endpoints) == length(distinct(var.interface_endpoints))
+    error_message = "interface_endpoints must be unique."
   }
 }
 

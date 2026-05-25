@@ -67,3 +67,13 @@ output "availability_zones" {
   description = "Availability zones used by the module."
   value       = var.availability_zones
 }
+
+output "s3_gateway_endpoint_id" {
+  description = "ID of the S3 gateway endpoint, or null when disabled."
+  value       = try(aws_vpc_endpoint.s3_gateway[0].id, null)
+}
+
+output "interface_endpoint_ids" {
+  description = "Map of interface endpoint service short name -> endpoint ID."
+  value       = { for k, ep in aws_vpc_endpoint.interface : k => ep.id }
+}

@@ -88,3 +88,7 @@ module "artifacts" {
 | `bucket_domain_name` | Legacy domain name. |
 | `bucket_regional_domain_name` | Regional domain name. |
 | `bucket_hosted_zone_id` | Route53 hosted zone ID for the region. |
+
+<!-- BEGIN_TF_DOCS -->
+<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
+<!-- END_TF_DOCS -->

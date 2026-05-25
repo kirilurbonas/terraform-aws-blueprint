@@ -1,0 +1,14 @@
+# Default owner — anything not otherwise matched.
+*                          @kirilurbonas
+
+# Module-specific reviewers can be added per directory.
+/modules/vpc/              @kirilurbonas
+/modules/eks/              @kirilurbonas
+/modules/rds/              @kirilurbonas
+/modules/iam-roles/        @kirilurbonas
+/modules/s3-secure/        @kirilurbonas
+/modules/kms/              @kirilurbonas
+/modules/state-backend/    @kirilurbonas
+
+# CI / repo wiring
+/.github/                  @kirilurbonas
