@@ -1,0 +1,167 @@
+---
+name: Terraform Validate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.tf'
+      - '.github/workflows/terraform-validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**.tf'
+      - '.github/workflows/terraform-validate.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  fmt:
+    name: terraform fmt
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.fmt.outcome }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: terraform fmt -check -recursive
+        id: fmt
+        run: terraform fmt -check -recursive -diff
+
+  discover:
+    name: discover terraform dirs
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.find.outputs.modules }}
+      examples: ${{ steps.find.outputs.examples }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find module and example dirs
+        id: find
+        run: |
+          set -euo pipefail
+          modules=$(find modules -mindepth 1 -maxdepth 1 -type d | jq -R -s -c 'split("\n")[:-1]')
+          examples=$(find examples -mindepth 1 -maxdepth 1 -type d | jq -R -s -c 'split("\n")[:-1]')
+          echo "modules=${modules}" >> "$GITHUB_OUTPUT"
+          echo "examples=${examples}" >> "$GITHUB_OUTPUT"
+
+  validate-modules:
+    name: validate ${{ matrix.dir }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJson(needs.discover.outputs.modules) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: ${{ matrix.dir }}
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: ${{ matrix.dir }}
+        run: terraform validate -no-color
+
+  validate-examples:
+    name: validate ${{ matrix.dir }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJson(needs.discover.outputs.examples) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: ${{ matrix.dir }}
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: ${{ matrix.dir }}
+        run: terraform validate -no-color
+
+  tflint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: TFLint init
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run TFLint
+        run: tflint --recursive --minimum-failure-severity=warning
+
+  comment:
+    name: PR validation summary
+    if: github.event_name == 'pull_request' && always()
+    needs: [fmt, validate-modules, validate-examples, tflint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = {
+              'terraform fmt':       '${{ needs.fmt.result }}',
+              'module validate':    '${{ needs.validate-modules.result }}',
+              'example validate':   '${{ needs.validate-examples.result }}',
+              'tflint':             '${{ needs.tflint.result }}',
+            };
+            const icon = r => r === 'success' ? ':white_check_mark:' :
+                              r === 'skipped' ? ':fast_forward:' : ':x:';
+            const lines = Object.entries(results)
+              .map(([k, v]) => `| ${k} | ${icon(v)} ${v} |`)
+              .join('\n');
+            const body = [
+              '### Terraform validation',
+              '',
+              '| Check | Result |',
+              '| --- | --- |',
+              lines,
+              '',
+              `_Commit ${context.sha.substring(0, 7)} — workflow ${context.workflow}_`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
