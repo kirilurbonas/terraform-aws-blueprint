@@ -32,7 +32,7 @@ jobs:
       result: ${{ steps.fmt.outcome }}
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
       - id: fmt
@@ -64,7 +64,7 @@ jobs:
         dir: ${{ fromJson(needs.discover.outputs.modules) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
       - working-directory: ${{ matrix.dir }}
@@ -82,7 +82,7 @@ jobs:
         dir: ${{ fromJson(needs.discover.outputs.examples) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
       - working-directory: ${{ matrix.dir }}
@@ -100,7 +100,7 @@ jobs:
         dir: ${{ fromJson(needs.discover.outputs.modules) }}
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
       - name: skip if no tests
