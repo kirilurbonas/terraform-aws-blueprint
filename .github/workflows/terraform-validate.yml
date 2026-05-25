@@ -31,7 +31,7 @@ jobs:
     outputs:
       result: ${{ steps.fmt.outcome }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
@@ -45,7 +45,7 @@ jobs:
       modules: ${{ steps.find.outputs.modules }}
       examples: ${{ steps.find.outputs.examples }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: find
         run: |
           set -euo pipefail
@@ -63,7 +63,7 @@ jobs:
       matrix:
         dir: ${{ fromJson(needs.discover.outputs.modules) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
@@ -81,7 +81,7 @@ jobs:
       matrix:
         dir: ${{ fromJson(needs.discover.outputs.examples) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
@@ -99,7 +99,7 @@ jobs:
       matrix:
         dir: ${{ fromJson(needs.discover.outputs.modules) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
@@ -123,7 +123,7 @@ jobs:
     name: tflint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: terraform-linters/setup-tflint@v4
         with:
           tflint_version: latest
@@ -136,7 +136,7 @@ jobs:
     name: tfsec
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run tfsec
         uses: aquasecurity/tfsec-action@v1.0.3
         with:
