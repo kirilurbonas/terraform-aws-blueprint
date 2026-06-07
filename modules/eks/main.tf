@@ -26,6 +26,9 @@ locals {
 
   name_prefix  = "${var.name_prefix}-${var.environment}"
   cluster_name = "${local.name_prefix}-eks"
+  enable_node_ssm = anytrue([
+    for ng in values(local.node_groups) : ng.enable_ssm_access
+  ])
 
   # Build a normalized map of node groups so we can for_each over it deterministically.
   node_groups = {
@@ -321,11 +324,10 @@ resource "aws_iam_role_policy_attachment" "node_ecr" {
 }
 
 resource "aws_iam_role_policy_attachment" "node_ssm" {
-  for_each = { for k, ng in local.node_groups : k => ng if ng.enable_ssm_access }
+  count = local.enable_node_ssm ? 1 : 0
 
-  # Same managed policy attached once per node group that requests it. The
-  # underlying role is shared, so AWS dedupes — for_each is purely to keep
-  # Terraform's resource graph happy.
+  # The node role is shared across every managed node group, so the SSM policy
+  # should only be attached once even if multiple groups request SSM access.
   role       = aws_iam_role.node.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }

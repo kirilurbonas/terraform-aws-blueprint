@@ -27,6 +27,16 @@ variable "bucket_name" {
   type        = string
   description = "Exact bucket name. Mutually exclusive with bucket_name_prefix."
   default     = null
+
+  validation {
+    condition     = var.bucket_name == null || can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.bucket_name))
+    error_message = "bucket_name must be 3-63 chars, lowercase alphanumerics / dots / hyphens, and start/end with an alphanumeric."
+  }
+
+  validation {
+    condition     = (var.bucket_name != null) != (var.bucket_name_prefix != null)
+    error_message = "Set exactly one of bucket_name or bucket_name_prefix."
+  }
 }
 
 variable "bucket_name_prefix" {
@@ -99,6 +109,11 @@ variable "kms_key_arn" {
   type        = string
   description = "KMS key ARN. Required when sse_algorithm = aws:kms."
   default     = null
+
+  validation {
+    condition     = var.sse_algorithm != "aws:kms" || var.kms_key_arn != null
+    error_message = "kms_key_arn must be set when sse_algorithm = aws:kms."
+  }
 }
 
 ###############################################################################

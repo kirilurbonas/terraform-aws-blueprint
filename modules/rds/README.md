@@ -11,6 +11,8 @@ master credentials stored in AWS Secrets Manager.
 - Random master password (32 chars), persisted to Secrets Manager
 - Backups with configurable retention (default 7 days) and dedicated backup window
 - Performance Insights and Enhanced Monitoring on by default
+- Explicit CloudWatch log groups for exported DB logs, with configurable
+  retention and optional KMS encryption
 - Parameter group seeded with sensible slow-query / connection logging defaults
 - Deletion protection on by default; production environments take a final
   snapshot and keep their secret in the recovery window
@@ -79,6 +81,8 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | `performance_insights_enabled` | `bool` | `true` | no | Performance Insights. |
 | `performance_insights_retention_days` | `number` | `7` | no | PI retention. |
 | `monitoring_interval` | `number` | `60` | no | Enhanced Monitoring seconds. |
+| `cloudwatch_log_retention_days` | `number` | `90` | no | Retention for exported DB log groups. |
+| `cloudwatch_log_kms_key_arn` | `string` | `null` | no | Optional KMS key for exported DB log groups. |
 | `read_replicas` | `map(object)` | `{}` | no | Read replicas keyed by short name; each takes optional `instance_class` and `multi_az`. |
 | `tags` | `map(string)` | `{}` | no | Extra tags. |
 
@@ -104,3 +108,99 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 <!-- BEGIN_TF_DOCS -->
 <!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
 <!-- END_TF_DOCS -->
+<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+## Requirements
+
+| Name | Version |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
+| <a name="requirement_random"></a> [random](#requirement\_random) | >= 3.5 |
+
+## Providers
+
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
+| <a name="provider_random"></a> [random](#provider\_random) | 3.9.0 |
+
+## Modules
+
+No modules.
+
+## Resources
+
+| Name | Type |
+| ---- | ---- |
+| [aws_cloudwatch_log_group.exports](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
+| [aws_db_instance.replica](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance) | resource |
+| [aws_db_instance.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance) | resource |
+| [aws_db_parameter_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_parameter_group) | resource |
+| [aws_db_subnet_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_subnet_group) | resource |
+| [aws_iam_role.monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role_policy_attachment.monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
+| [aws_secretsmanager_secret.master](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+| [aws_secretsmanager_secret_version.master](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
+| [aws_security_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
+| [aws_vpc_security_group_ingress_rule.from_cidr](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
+| [aws_vpc_security_group_ingress_rule.from_sg](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
+| [random_password.master](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
+| [aws_iam_policy_document.monitoring_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_allocated_storage_gb"></a> [allocated\_storage\_gb](#input\_allocated\_storage\_gb) | Initial allocated storage in GiB. | `number` | `100` | no |
+| <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to reach the DB port. | `list(string)` | `[]` | no |
+| <a name="input_allowed_security_group_ids"></a> [allowed\_security\_group\_ids](#input\_allowed\_security\_group\_ids) | Security group IDs allowed to reach the DB port. | `list(string)` | `[]` | no |
+| <a name="input_auto_minor_version_upgrade"></a> [auto\_minor\_version\_upgrade](#input\_auto\_minor\_version\_upgrade) | Allow RDS to apply minor engine upgrades automatically during the maintenance window. | `bool` | `true` | no |
+| <a name="input_backup_retention_days"></a> [backup\_retention\_days](#input\_backup\_retention\_days) | Days to keep automated backups. | `number` | `7` | no |
+| <a name="input_backup_window"></a> [backup\_window](#input\_backup\_window) | Preferred backup window in UTC (e.g. "03:00-04:00"). | `string` | `"03:00-04:00"` | no |
+| <a name="input_cloudwatch_log_kms_key_arn"></a> [cloudwatch\_log\_kms\_key\_arn](#input\_cloudwatch\_log\_kms\_key\_arn) | Optional KMS key ARN for encrypting the CloudWatch log groups that receive exported DB logs. | `string` | `null` | no |
+| <a name="input_cloudwatch_log_retention_days"></a> [cloudwatch\_log\_retention\_days](#input\_cloudwatch\_log\_retention\_days) | Retention in days for the CloudWatch log groups that receive exported DB logs. | `number` | `90` | no |
+| <a name="input_db_name"></a> [db\_name](#input\_db\_name) | Initial database name created inside the instance. | `string` | n/a | yes |
+| <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Block the instance from being deleted without first removing this flag. | `bool` | `true` | no |
+| <a name="input_engine"></a> [engine](#input\_engine) | Database engine. Supported: postgres, mysql. | `string` | n/a | yes |
+| <a name="input_engine_version"></a> [engine\_version](#input\_engine\_version) | RDS engine version (e.g. "16.3" for postgres, "8.0.36" for mysql). | `string` | n/a | yes |
+| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (dev, staging, prod). | `string` | n/a | yes |
+| <a name="input_extra_parameters"></a> [extra\_parameters](#input\_extra\_parameters) | Additional DB parameters merged on top of the engine defaults. | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
+| <a name="input_instance_class"></a> [instance\_class](#input\_instance\_class) | RDS instance class (e.g. db.t3.medium, db.m6i.large). | `string` | n/a | yes |
+| <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | Customer-managed KMS key for storage / Performance Insights / Secrets Manager. Null = AWS-managed key. | `string` | `null` | no |
+| <a name="input_maintenance_window"></a> [maintenance\_window](#input\_maintenance\_window) | Preferred maintenance window in UTC (e.g. "Sun:04:30-Sun:05:30"). | `string` | `"Sun:04:30-Sun:05:30"` | no |
+| <a name="input_master_username"></a> [master\_username](#input\_master\_username) | Master DB username. | `string` | `"dbadmin"` | no |
+| <a name="input_max_allocated_storage_gb"></a> [max\_allocated\_storage\_gb](#input\_max\_allocated\_storage\_gb) | Upper bound for storage autoscaling. Set equal to allocated\_storage\_gb to disable. | `number` | `500` | no |
+| <a name="input_monitoring_interval"></a> [monitoring\_interval](#input\_monitoring\_interval) | Enhanced Monitoring interval in seconds. 0 disables. Valid: 0, 1, 5, 10, 15, 30, 60. | `number` | `60` | no |
+| <a name="input_multi_az"></a> [multi\_az](#input\_multi\_az) | Deploy a synchronous standby in another AZ. | `bool` | `true` | no |
+| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Prefix applied to all named resources. | `string` | n/a | yes |
+| <a name="input_parameter_group_family"></a> [parameter\_group\_family](#input\_parameter\_group\_family) | Parameter group family (e.g. postgres16, mysql8.0). Derived from engine/version when null. | `string` | `null` | no |
+| <a name="input_performance_insights_enabled"></a> [performance\_insights\_enabled](#input\_performance\_insights\_enabled) | Enable Performance Insights. | `bool` | `true` | no |
+| <a name="input_performance_insights_retention_days"></a> [performance\_insights\_retention\_days](#input\_performance\_insights\_retention\_days) | Performance Insights retention in days. 7 is free; 31, 93, 186, 372, 731 require long-term retention pricing. | `number` | `7` | no |
+| <a name="input_port"></a> [port](#input\_port) | Listener port. Defaults to engine standard (5432 for postgres, 3306 for mysql). | `number` | `null` | no |
+| <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
+| <a name="input_read_replicas"></a> [read\_replicas](#input\_read\_replicas) | Map of read replicas to create, keyed by short name. Each replica inherits storage, parameter group, and SG from the primary; instance\_class defaults to the primary's class when null. | <pre>map(object({<br/>    instance_class = optional(string)<br/>    multi_az       = optional(bool, false)<br/>  }))</pre> | `{}` | no |
+| <a name="input_storage_encrypted"></a> [storage\_encrypted](#input\_storage\_encrypted) | Whether storage is encrypted at rest. | `bool` | `true` | no |
+| <a name="input_storage_type"></a> [storage\_type](#input\_storage\_type) | Storage type: gp3, io1, or io2. | `string` | `"gp3"` | no |
+| <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | Subnet IDs for the DB subnet group. Should be private. | `list(string)` | n/a | yes |
+| <a name="input_tags"></a> [tags](#input\_tags) | Additional tags merged onto every resource. | `map(string)` | `{}` | no |
+| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC where the DB security group is created. | `string` | n/a | yes |
+
+## Outputs
+
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_address"></a> [address](#output\_address) | Hostname of the RDS instance. |
+| <a name="output_db_instance_arn"></a> [db\_instance\_arn](#output\_db\_instance\_arn) | RDS instance ARN. |
+| <a name="output_db_instance_id"></a> [db\_instance\_id](#output\_db\_instance\_id) | RDS instance identifier. |
+| <a name="output_db_name"></a> [db\_name](#output\_db\_name) | Initial database name. |
+| <a name="output_db_subnet_group_name"></a> [db\_subnet\_group\_name](#output\_db\_subnet\_group\_name) | Name of the DB subnet group. |
+| <a name="output_endpoint"></a> [endpoint](#output\_endpoint) | Connection endpoint (host:port). |
+| <a name="output_master_password"></a> [master\_password](#output\_master\_password) | Master password. Prefer reading from Secrets Manager instead of consuming this directly. |
+| <a name="output_master_secret_arn"></a> [master\_secret\_arn](#output\_master\_secret\_arn) | ARN of the Secrets Manager secret holding the master credentials JSON. |
+| <a name="output_master_username"></a> [master\_username](#output\_master\_username) | Master username. |
+| <a name="output_parameter_group_name"></a> [parameter\_group\_name](#output\_parameter\_group\_name) | Name of the parameter group. |
+| <a name="output_port"></a> [port](#output\_port) | Port the database is listening on. |
+| <a name="output_read_replica_endpoints"></a> [read\_replica\_endpoints](#output\_read\_replica\_endpoints) | Map of replica name -> connection endpoint. |
+| <a name="output_read_replica_ids"></a> [read\_replica\_ids](#output\_read\_replica\_ids) | Map of replica name -> RDS instance identifier. |
+| <a name="output_security_group_id"></a> [security\_group\_id](#output\_security\_group\_id) | Security group ID guarding the RDS instance. |
+<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->

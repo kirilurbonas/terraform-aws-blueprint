@@ -86,6 +86,11 @@ variable "max_allocated_storage_gb" {
   type        = number
   description = "Upper bound for storage autoscaling. Set equal to allocated_storage_gb to disable."
   default     = 500
+
+  validation {
+    condition     = var.max_allocated_storage_gb >= var.allocated_storage_gb
+    error_message = "max_allocated_storage_gb must be greater than or equal to allocated_storage_gb."
+  }
 }
 
 variable "storage_type" {
@@ -165,6 +170,13 @@ variable "allowed_cidr_blocks" {
   type        = list(string)
   description = "CIDR blocks allowed to reach the DB port."
   default     = []
+
+  validation {
+    condition = alltrue([
+      for cidr in var.allowed_cidr_blocks : can(cidrnetmask(cidr))
+    ])
+    error_message = "allowed_cidr_blocks must contain valid IPv4 CIDRs."
+  }
 }
 
 variable "allowed_security_group_ids" {
@@ -248,6 +260,23 @@ variable "monitoring_interval" {
     condition     = contains([0, 1, 5, 10, 15, 30, 60], var.monitoring_interval)
     error_message = "monitoring_interval must be one of: 0, 1, 5, 10, 15, 30, 60."
   }
+}
+
+variable "cloudwatch_log_retention_days" {
+  type        = number
+  description = "Retention in days for the CloudWatch log groups that receive exported DB logs."
+  default     = 90
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653], var.cloudwatch_log_retention_days)
+    error_message = "cloudwatch_log_retention_days must be a valid CloudWatch Logs retention value."
+  }
+}
+
+variable "cloudwatch_log_kms_key_arn" {
+  type        = string
+  description = "Optional KMS key ARN for encrypting the CloudWatch log groups that receive exported DB logs."
+  default     = null
 }
 
 ###############################################################################

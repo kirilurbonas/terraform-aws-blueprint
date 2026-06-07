@@ -10,6 +10,31 @@ are explicitly called out under each release.
 
 ## [Unreleased]
 
+### Added
+
+- **VPC flow-log hardening** — the `vpc` module now hardens its module-managed
+  flow-log bucket with `BucketOwnerEnforced`, a TLS-only bucket policy, and the
+  AWS log-delivery permissions Flow Logs need to actually write objects. It
+  also exposes `flow_logs_file_format`,
+  `flow_logs_hive_compatible_partitions`, and
+  `flow_logs_per_hour_partition` for parquet- and analytics-friendly delivery.
+- **RDS log-group management** — the `rds` module now creates CloudWatch log
+  groups for exported database logs (primary + replicas) with configurable
+  retention and optional KMS encryption via
+  `cloudwatch_log_retention_days` / `cloudwatch_log_kms_key_arn`.
+
+### Changed
+
+- **EKS shared-node-role policy attachment** — `AmazonSSMManagedInstanceCore`
+  is now attached once to the shared node IAM role even when multiple node
+  groups enable SSM access, avoiding duplicate attachment churn.
+- **Stronger module validation** — `eks`, `rds`, and `s3-secure` now validate
+  more production-sensitive invariants such as node-group scaling bounds,
+  access-entry namespace scoping, storage autoscaling bounds, exact-one bucket
+  naming inputs, and KMS requirements for strict S3 encryption.
+- **S3 strict upload enforcement** — the `s3-secure` module now denies uploads
+  that use the wrong SSE algorithm and, in KMS mode, the wrong key ID.
+
 ## [0.2.1] - 2026-05-25
 
 ### Fixed

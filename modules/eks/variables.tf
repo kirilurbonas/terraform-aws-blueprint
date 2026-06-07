@@ -58,6 +58,18 @@ variable "endpoint_public_access_cidrs" {
   type        = list(string)
   description = "CIDR blocks permitted on the public endpoint. Ignored when endpoint_public_access = false."
   default     = ["0.0.0.0/0"]
+
+  validation {
+    condition = alltrue([
+      for cidr in var.endpoint_public_access_cidrs : can(cidrnetmask(cidr))
+    ])
+    error_message = "endpoint_public_access_cidrs must contain valid IPv4 CIDRs."
+  }
+
+  validation {
+    condition     = length(var.endpoint_public_access_cidrs) == length(distinct(var.endpoint_public_access_cidrs))
+    error_message = "endpoint_public_access_cidrs must contain unique values."
+  }
 }
 
 variable "enabled_cluster_log_types" {
@@ -129,6 +141,24 @@ variable "access_entries" {
   }))
   description = "Access entries to create on the cluster, keyed by a stable name. Each may include policy associations (e.g. AmazonEKSClusterAdminPolicy scoped to cluster, AmazonEKSAdminPolicy scoped to a namespace)."
   default     = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for _, entry in var.access_entries : [
+        for assoc in entry.policy_associations : contains(["cluster", "namespace"], assoc.access_scope.type)
+      ]
+    ]))
+    error_message = "Each access entry policy association access_scope.type must be either cluster or namespace."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for _, entry in var.access_entries : [
+        for assoc in entry.policy_associations : assoc.access_scope.type != "namespace" || try(length(assoc.access_scope.namespaces), 0) > 0
+      ]
+    ]))
+    error_message = "Namespace-scoped access entry policy associations must include at least one namespace."
+  }
 }
 
 ###############################################################################
@@ -181,6 +211,28 @@ variable "node_groups" {
       ])
     ])
     error_message = "Each taint effect must be one of: NO_SCHEDULE, NO_EXECUTE, PREFER_NO_SCHEDULE."
+  }
+
+  validation {
+    condition = alltrue([
+      for _, ng in var.node_groups :
+      ng.min_size >= 0 && ng.desired_size >= 0 && ng.max_size >= 1 && ng.min_size <= ng.desired_size && ng.desired_size <= ng.max_size
+    ])
+    error_message = "Each node group must satisfy min_size <= desired_size <= max_size, with non-negative sizes."
+  }
+
+  validation {
+    condition = alltrue([
+      for _, ng in var.node_groups : ng.disk_size_gb >= 20
+    ])
+    error_message = "Each node group disk_size_gb must be at least 20 GiB."
+  }
+
+  validation {
+    condition = alltrue([
+      for _, ng in var.node_groups : ng.max_unavailable_pc >= 1 && ng.max_unavailable_pc <= 100
+    ])
+    error_message = "Each node group max_unavailable_pc must be between 1 and 100."
   }
 }
 

@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.40"
     }
   }
 }
@@ -234,6 +234,69 @@ data "aws_iam_policy_document" "bucket" {
         test     = "Null"
         variable = "s3:x-amz-server-side-encryption"
         values   = ["true"]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.deny_unencrypted_object_uploads ? [1] : []
+    content {
+      sid       = "DenyIncorrectEncryptionHeader"
+      effect    = "Deny"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.this.arn}/*"]
+
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+
+      condition {
+        test     = "StringNotEquals"
+        variable = "s3:x-amz-server-side-encryption"
+        values   = [var.sse_algorithm]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.deny_unencrypted_object_uploads && local.use_kms ? [1] : []
+    content {
+      sid       = "DenyMissingKmsKeyId"
+      effect    = "Deny"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.this.arn}/*"]
+
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+
+      condition {
+        test     = "Null"
+        variable = "s3:x-amz-server-side-encryption-aws-kms-key-id"
+        values   = ["true"]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.deny_unencrypted_object_uploads && local.use_kms ? [1] : []
+    content {
+      sid       = "DenyIncorrectKmsKeyId"
+      effect    = "Deny"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.this.arn}/*"]
+
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+
+      condition {
+        test     = "StringNotEquals"
+        variable = "s3:x-amz-server-side-encryption-aws-kms-key-id"
+        values   = [var.kms_key_arn]
       }
     }
   }

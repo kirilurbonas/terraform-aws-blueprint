@@ -28,13 +28,14 @@ locals {
     var.tags,
   )
 
-  name_prefix   = "${var.name_prefix}-${var.environment}"
-  identifier    = "${local.name_prefix}-${var.engine}"
-  is_postgres   = var.engine == "postgres"
-  port          = var.port != null ? var.port : (local.is_postgres ? 5432 : 3306)
-  family        = var.parameter_group_family != null ? var.parameter_group_family : (local.is_postgres ? "postgres${split(".", var.engine_version)[0]}" : "mysql${join(".", slice(split(".", var.engine_version), 0, 2))}")
-  is_prod       = var.environment == "prod"
-  master_secret = random_password.master.result
+  name_prefix    = "${var.name_prefix}-${var.environment}"
+  identifier     = "${local.name_prefix}-${var.engine}"
+  is_postgres    = var.engine == "postgres"
+  port           = var.port != null ? var.port : (local.is_postgres ? 5432 : 3306)
+  family         = var.parameter_group_family != null ? var.parameter_group_family : (local.is_postgres ? "postgres${split(".", var.engine_version)[0]}" : "mysql${join(".", slice(split(".", var.engine_version), 0, 2))}")
+  is_prod        = var.environment == "prod"
+  master_secret  = random_password.master.result
+  db_log_exports = local.is_postgres ? ["postgresql", "upgrade"] : ["audit", "error", "general", "slowquery"]
 
   default_params = local.is_postgres ? [
     { name = "log_min_duration_statement", value = "1000" },
@@ -45,6 +46,29 @@ locals {
     { name = "long_query_time", value = "1" },
     { name = "log_output", value = "FILE" },
   ]
+
+  db_log_group_items = concat(
+    [
+      for log_type in local.db_log_exports : {
+        key        = "primary:${log_type}"
+        identifier = local.identifier
+        log_type   = log_type
+      }
+    ],
+    flatten([
+      for replica_key, _ in var.read_replicas : [
+        for log_type in local.db_log_exports : {
+          key        = "${replica_key}:${log_type}"
+          identifier = "${local.identifier}-replica-${replica_key}"
+          log_type   = log_type
+        }
+      ]
+    ]),
+  )
+
+  db_log_groups = {
+    for item in local.db_log_group_items : item.key => item
+  }
 }
 
 ###############################################################################
@@ -203,6 +227,20 @@ resource "aws_iam_role_policy_attachment" "monitoring" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
+resource "aws_cloudwatch_log_group" "exports" {
+  for_each = local.db_log_groups
+
+  name              = "/aws/rds/instance/${each.value.identifier}/${each.value.log_type}"
+  retention_in_days = var.cloudwatch_log_retention_days
+  kms_key_id        = var.cloudwatch_log_kms_key_arn
+
+  tags = merge(local.common_tags, {
+    Name       = "${each.value.identifier}-${each.value.log_type}-logs"
+    LogType    = each.value.log_type
+    DBInstance = each.value.identifier
+  })
+}
+
 ###############################################################################
 # Primary DB instance
 ###############################################################################
@@ -251,7 +289,7 @@ resource "aws_db_instance" "this" {
   monitoring_interval = var.monitoring_interval
   monitoring_role_arn = var.monitoring_interval > 0 ? aws_iam_role.monitoring[0].arn : null
 
-  enabled_cloudwatch_logs_exports = local.is_postgres ? ["postgresql", "upgrade"] : ["audit", "error", "general", "slowquery"]
+  enabled_cloudwatch_logs_exports = local.db_log_exports
 
   auto_minor_version_upgrade = var.auto_minor_version_upgrade
   apply_immediately          = !local.is_prod
@@ -260,6 +298,11 @@ resource "aws_db_instance" "this" {
     Name = local.identifier
     Role = "primary"
   })
+
+  depends_on = [
+    aws_iam_role_policy_attachment.monitoring,
+    aws_cloudwatch_log_group.exports,
+  ]
 }
 
 ###############################################################################
@@ -289,9 +332,11 @@ resource "aws_db_instance" "replica" {
 
   performance_insights_enabled          = var.performance_insights_enabled
   performance_insights_retention_period = var.performance_insights_enabled ? var.performance_insights_retention_days : null
+  performance_insights_kms_key_id       = var.performance_insights_enabled ? var.kms_key_arn : null
 
-  monitoring_interval = var.monitoring_interval
-  monitoring_role_arn = var.monitoring_interval > 0 ? aws_iam_role.monitoring[0].arn : null
+  monitoring_interval             = var.monitoring_interval
+  monitoring_role_arn             = var.monitoring_interval > 0 ? aws_iam_role.monitoring[0].arn : null
+  enabled_cloudwatch_logs_exports = local.db_log_exports
 
   skip_final_snapshot = true
   apply_immediately   = !local.is_prod
@@ -301,4 +346,9 @@ resource "aws_db_instance" "replica" {
     Role    = "replica"
     Replica = each.key
   })
+
+  depends_on = [
+    aws_iam_role_policy_attachment.monitoring,
+    aws_cloudwatch_log_group.exports,
+  ]
 }

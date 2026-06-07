@@ -23,7 +23,7 @@ output "backend_config_hcl" {
   value       = <<-EOT
     bucket         = "${aws_s3_bucket.state.id}"
     key            = "<stack-name>/terraform.tfstate"
-    region         = "${data.aws_region.current.name}"
+    region         = "${data.aws_region.current.region}"
     dynamodb_table = "${aws_dynamodb_table.lock.name}"
     encrypt        = true
   EOT

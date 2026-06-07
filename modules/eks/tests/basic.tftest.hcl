@@ -50,6 +50,22 @@ run "multi_ng_creates_per_ng_resources" {
   }
 }
 
+run "ssm_policy_attached_once_for_shared_node_role" {
+  command = plan
+
+  variables {
+    node_groups = {
+      system = { desired_size = 2, min_size = 2, max_size = 4, enable_ssm_access = true }
+      apps   = { desired_size = 3, min_size = 3, max_size = 9, enable_ssm_access = true }
+    }
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy_attachment.node_ssm) == 1
+    error_message = "the shared node role should only receive one SSM policy attachment"
+  }
+}
+
 run "addons_are_created" {
   command = plan
 
@@ -82,5 +98,41 @@ run "rejects_empty_node_groups" {
 
   variables {
     node_groups = {}
+  }
+}
+
+run "rejects_bad_scaling_bounds" {
+  command         = plan
+  expect_failures = [var.node_groups]
+
+  variables {
+    node_groups = {
+      default = {
+        desired_size = 1
+        min_size     = 2
+        max_size     = 3
+      }
+    }
+  }
+}
+
+run "rejects_namespace_policy_without_namespaces" {
+  command         = plan
+  expect_failures = [var.access_entries]
+
+  variables {
+    access_entries = {
+      namespace_admin = {
+        principal_arn = "arn:aws:iam::111122223333:role/ns-admin"
+        policy_associations = [
+          {
+            policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy"
+            access_scope = {
+              type = "namespace"
+            }
+          },
+        ]
+      }
+    }
   }
 }

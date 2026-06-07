@@ -92,6 +92,29 @@ variable "flow_logs_retention_days" {
   }
 }
 
+variable "flow_logs_file_format" {
+  type        = string
+  description = "S3 file format for VPC flow logs: plain-text or parquet."
+  default     = "plain-text"
+
+  validation {
+    condition     = contains(["plain-text", "parquet"], var.flow_logs_file_format)
+    error_message = "flow_logs_file_format must be one of: plain-text, parquet."
+  }
+}
+
+variable "flow_logs_hive_compatible_partitions" {
+  type        = bool
+  description = "Whether to use hive-compatible S3 key prefixes for VPC flow log delivery."
+  default     = false
+}
+
+variable "flow_logs_per_hour_partition" {
+  type        = bool
+  description = "Whether to partition VPC flow log objects by hour instead of day."
+  default     = false
+}
+
 ###############################################################################
 # VPC Endpoints
 ###############################################################################

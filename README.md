@@ -79,11 +79,11 @@ For end-to-end (`vpc` + `eks` + `rds` + `s3-secure` + `kms` + IRSA) see
 
 | Module | Purpose |
 |--------|---------|
-| [`vpc`](modules/vpc/) | Multi-AZ VPC, public/private subnets, NAT (single or per-AZ), optional VPC Flow Logs to S3, S3 gateway + interface endpoints. |
+| [`vpc`](modules/vpc/) | Multi-AZ VPC, public/private subnets, NAT (single or per-AZ), optional VPC Flow Logs to S3 with a hardened module-managed delivery bucket and optional parquet/hour-partitioned delivery, S3 gateway + interface endpoints. |
 | [`eks`](modules/eks/) | EKS control plane + **multiple managed node groups** (ON_DEMAND / SPOT, taints/labels per group), **launch-template-backed nodes with IMDSv2 required**, **managed add-ons** (CNI / coredns / kube-proxy / EBS CSI / …), OIDC provider for IRSA, **Access Entries** (no `aws-auth`), KMS envelope encryption, full control-plane logging. |
-| [`rds`](modules/rds/) | Multi-AZ RDS (Postgres / MySQL), KMS-encrypted, Secrets-Manager-backed master credentials, Performance Insights, Enhanced Monitoring, deterministic final snapshot, **read replicas**. |
+| [`rds`](modules/rds/) | Multi-AZ RDS (Postgres / MySQL), KMS-encrypted, Secrets-Manager-backed master credentials, Performance Insights, Enhanced Monitoring, deterministic final snapshot, **managed CloudWatch log groups**, **read replicas**. |
 | [`iam-roles`](modules/iam-roles/) | Curated platform IAM roles: EKS cluster, EKS node, IRSA, cross-account CI deployer (allow-only statement lists). |
-| [`s3-secure`](modules/s3-secure/) | S3 bucket with public access blocked, ACLs disabled, encryption + versioning + lifecycle + TLS-only policy + deny-unencrypted-uploads policy. |
+| [`s3-secure`](modules/s3-secure/) | S3 bucket with public access blocked, ACLs disabled, encryption + versioning + lifecycle + TLS-only policy + strict encryption-header / KMS-key enforcement on uploads. |
 | [`kms`](modules/kms/) | Customer-managed KMS key with annual rotation, alias, and an explicit key policy (administrators / users / service principals). |
 | [`state-backend`](modules/state-backend/) | S3 bucket + DynamoDB lock table for a Terraform remote backend. Emits a ready-to-paste backend config block. |
 

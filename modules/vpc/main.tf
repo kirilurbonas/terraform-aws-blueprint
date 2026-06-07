@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.40"
     }
   }
 }
@@ -27,6 +27,8 @@ locals {
   )
 
   name_prefix = "${var.name_prefix}-${var.environment}"
+
+  use_module_managed_flow_logs_bucket = var.enable_flow_logs && var.flow_logs_s3_bucket_arn == null
 
   # Carve /20 public + /20 private subnets out of the VPC CIDR.
   public_subnet_cidrs  = [for i in range(local.az_count) : cidrsubnet(var.vpc_cidr, 4, i)]
@@ -178,7 +180,7 @@ resource "aws_route_table_association" "private" {
 ###############################################################################
 
 resource "aws_s3_bucket" "flow_logs" {
-  count = var.enable_flow_logs && var.flow_logs_s3_bucket_arn == null ? 1 : 0
+  count = local.use_module_managed_flow_logs_bucket ? 1 : 0
 
   bucket_prefix = "${local.name_prefix}-vpc-flow-logs-"
   force_destroy = var.environment != "prod"
@@ -196,6 +198,16 @@ resource "aws_s3_bucket_public_access_block" "flow_logs" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "flow_logs" {
+  count = length(aws_s3_bucket.flow_logs)
+
+  bucket = aws_s3_bucket.flow_logs[0].id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "flow_logs" {
@@ -247,6 +259,98 @@ resource "aws_s3_bucket_lifecycle_configuration" "flow_logs" {
   }
 }
 
+data "aws_iam_policy_document" "flow_logs" {
+  count = local.use_module_managed_flow_logs_bucket ? 1 : 0
+
+  statement {
+    sid     = "AllowAWSLogDeliveryAclCheck"
+    effect  = "Allow"
+    actions = ["s3:GetBucketAcl", "s3:ListBucket"]
+    resources = [
+      aws_s3_bucket.flow_logs[0].arn,
+    ]
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"]
+    }
+  }
+
+  statement {
+    sid     = "AllowAWSLogDeliveryWrite"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.flow_logs[0].arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*",
+    ]
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"]
+    }
+  }
+
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.flow_logs[0].arn,
+      "${aws_s3_bucket.flow_logs[0].arn}/*",
+    ]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "flow_logs" {
+  count = local.use_module_managed_flow_logs_bucket ? 1 : 0
+
+  bucket = aws_s3_bucket.flow_logs[0].id
+  policy = data.aws_iam_policy_document.flow_logs[0].json
+
+  depends_on = [aws_s3_bucket_public_access_block.flow_logs]
+}
+
 resource "aws_flow_log" "this" {
   count = var.enable_flow_logs ? 1 : 0
 
@@ -256,9 +360,17 @@ resource "aws_flow_log" "this" {
   vpc_id                   = aws_vpc.this.id
   max_aggregation_interval = 60
 
+  destination_options {
+    file_format                = var.flow_logs_file_format
+    hive_compatible_partitions = var.flow_logs_hive_compatible_partitions
+    per_hour_partition         = var.flow_logs_per_hour_partition
+  }
+
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-vpc-flow-logs"
   })
+
+  depends_on = [aws_s3_bucket_policy.flow_logs]
 }
 
 ###############################################################################
@@ -304,7 +416,7 @@ resource "aws_vpc_endpoint" "s3_gateway" {
   count = var.enable_s3_gateway_endpoint ? 1 : 0
 
   vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = aws_route_table.private[*].id
 
@@ -317,7 +429,7 @@ resource "aws_vpc_endpoint" "interface" {
   for_each = toset(var.interface_endpoints)
 
   vpc_id              = aws_vpc.this.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.${each.value}"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.${each.value}"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
@@ -328,4 +440,6 @@ resource "aws_vpc_endpoint" "interface" {
   })
 }
 
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 data "aws_region" "current" {}
