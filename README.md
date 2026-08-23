@@ -3,7 +3,7 @@
 **Production-grade Terraform modules for AWS infrastructure.**
 
 [![Terraform](https://img.shields.io/badge/terraform-%E2%89%A5%201.5-7B42BC?logo=terraform)](https://www.terraform.io/)
-[![AWS Provider](https://img.shields.io/badge/aws--provider-%E2%89%A5%205.40-FF9900?logo=amazon-aws)](https://registry.terraform.io/providers/hashicorp/aws/latest)
+[![AWS Provider](https://img.shields.io/badge/aws--provider-%E2%89%A5%206.0%20%3C%207.0-FF9900?logo=amazon-aws)](https://registry.terraform.io/providers/hashicorp/aws/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/kirilurbonas/terraform-aws-blueprint/actions/workflows/terraform-validate.yml/badge.svg)](https://github.com/kirilurbonas/terraform-aws-blueprint/actions/workflows/terraform-validate.yml)
 [![Release](https://img.shields.io/github/v/release/kirilurbonas/terraform-aws-blueprint?display_name=tag&sort=semver)](https://github.com/kirilurbonas/terraform-aws-blueprint/releases)
@@ -145,8 +145,14 @@ For end-to-end (`vpc` + `eks` + `rds` + `s3-secure` + `kms` + IRSA) see
 | Tool / provider | Version |
 |-----------------|---------|
 | Terraform | `>= 1.5.0` (`terraform test` + `optional()` defaults) |
-| AWS provider | `>= 5.40` (Access Entries, v5 SG rule resources) |
-| Random provider (only for `rds`) | `>= 3.5` |
+| AWS provider | `>= 6.0, < 7.0` |
+| Random provider (only for `rds`) | `>= 3.5, < 4.0` |
+
+The AWS provider floor is `6.0` because `vpc` and `state-backend` read
+`data.aws_region.current.region`, which the provider only exposes from v6
+onward. The upper bound is deliberate: a future v7 will not silently break
+consumers pinned to this library. CI validates every module against the floor
+as well as the latest allowed version, so the constraint stays true.
 
 Region and credentials come from your AWS provider config — no module
 hardcodes a region or account ID.
@@ -170,13 +176,19 @@ hardcodes a region or account ID.
 │   └── prod-overrides/      # override.tf pattern for prevent_destroy
 ├── .github/
 │   ├── workflows/terraform-validate.yml
+│   ├── workflows/release-drafter.yml
+│   ├── release-drafter.yml
 │   ├── dependabot.yml
 │   ├── CODEOWNERS
 │   ├── pull_request_template.md
 │   └── ISSUE_TEMPLATE/
 ├── .pre-commit-config.yaml
 ├── .terraform-docs.yml
+├── .tflint.hcl
+├── .trivyignore.yaml
 ├── .gitignore
+├── Makefile
+├── ROADMAP.md
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -186,6 +198,7 @@ hardcodes a region or account ID.
 
 ## Local development
 
+You need `terraform`, `tflint`, `terraform-docs`, and `trivy` on `PATH`.
 Install the [pre-commit](https://pre-commit.com/) hooks once:
 
 ```bash
@@ -195,7 +208,22 @@ pre-commit install
 The hooks run `terraform fmt`, `terraform validate`, `terraform_docs`,
 `tflint`, and `trivy` on every commit.
 
-Run module tests (plan-only, against `mock_provider`):
+Everything else goes through the [`Makefile`](Makefile), which CI calls too —
+so a green `make all` locally means a green pipeline:
+
+```bash
+make help            # list targets
+make fmt             # canonical formatting
+make validate        # init + validate every module and example
+make validate-floor  # re-validate modules against the declared provider floor
+make lint            # tflint, shared rule set from .tflint.hcl
+make test            # plan-only module tests against mock_provider
+make docs-check      # fail if terraform-docs output is stale
+make security        # trivy, gating on HIGH/CRITICAL
+make all             # all of the above
+```
+
+To run one module's tests directly:
 
 ```bash
 cd modules/<name>
@@ -203,18 +231,18 @@ terraform init -backend=false
 terraform test
 ```
 
-Run validation against the whole tree:
-
-```bash
-terraform fmt -check -recursive
-for d in modules/* examples/*; do
-  (cd "$d" && terraform init -backend=false && terraform validate)
-done
-```
-
-CI runs all of the above plus `tfsec` (HIGH severity fails the build) on
-every PR and posts a sticky summary comment:
+CI runs the same checks on every PR and posts a sticky summary comment:
 [`.github/workflows/terraform-validate.yml`](.github/workflows/terraform-validate.yml).
+Every Trivy finding is uploaded to GitHub code scanning; HIGH and CRITICAL gate
+the build. Suppressions live in [`.trivyignore.yaml`](.trivyignore.yaml), each
+with a written justification — and anything that is a real gap rather than a
+deliberate choice carries an expiry date so it cannot be forgotten.
+
+## Roadmap
+
+See [`ROADMAP.md`](ROADMAP.md) for what each upcoming release carries, which
+breaking changes are staged behind opt-in flags, and what has been explicitly
+ruled out.
 
 ## Contributing
 

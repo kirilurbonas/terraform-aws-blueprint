@@ -91,25 +91,20 @@ module "artifacts" {
 | `bucket_hosted_zone_id` | Route53 hosted zone ID for the region. |
 
 <!-- BEGIN_TF_DOCS -->
-<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
-<!-- END_TF_DOCS -->
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0, < 7.0 |
 
-## Modules
 
-No modules.
 
 ## Resources
 
@@ -130,6 +125,8 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (dev, staging, prod). | `string` | n/a | yes |
+| <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
 | <a name="input_access_logging_target_bucket"></a> [access\_logging\_target\_bucket](#input\_access\_logging\_target\_bucket) | Optional bucket name to receive server access logs. | `string` | `null` | no |
 | <a name="input_access_logging_target_prefix"></a> [access\_logging\_target\_prefix](#input\_access\_logging\_target\_prefix) | Key prefix in the target bucket for access log objects. | `string` | `null` | no |
 | <a name="input_block_public_acls"></a> [block\_public\_acls](#input\_block\_public\_acls) | Block public ACLs. | `bool` | `true` | no |
@@ -139,7 +136,6 @@ No modules.
 | <a name="input_cors_rules"></a> [cors\_rules](#input\_cors\_rules) | List of CORS rules. Empty list disables CORS. | <pre>list(object({<br/>    allowed_methods = list(string)<br/>    allowed_origins = list(string)<br/>    allowed_headers = optional(list(string))<br/>    expose_headers  = optional(list(string))<br/>    max_age_seconds = optional(number)<br/>  }))</pre> | `[]` | no |
 | <a name="input_deny_unencrypted_object_uploads"></a> [deny\_unencrypted\_object\_uploads](#input\_deny\_unencrypted\_object\_uploads) | Deny PutObject calls that don't request server-side encryption. | `bool` | `true` | no |
 | <a name="input_enable_lifecycle_rules"></a> [enable\_lifecycle\_rules](#input\_enable\_lifecycle\_rules) | Apply the module's lifecycle rule. | `bool` | `true` | no |
-| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (dev, staging, prod). | `string` | n/a | yes |
 | <a name="input_expiration_days"></a> [expiration\_days](#input\_expiration\_days) | Expire current objects after N days. Null = never. | `number` | `null` | no |
 | <a name="input_extra_policy_statements"></a> [extra\_policy\_statements](#input\_extra\_policy\_statements) | Additional bucket-policy statements merged in (e.g. cross-account read access). | <pre>list(object({<br/>    sid       = optional(string)<br/>    effect    = string<br/>    actions   = list(string)<br/>    resources = list(string)<br/>    principals = optional(list(object({<br/>      type        = string<br/>      identifiers = list(string)<br/>    })), [])<br/>  }))</pre> | `[]` | no |
 | <a name="input_force_destroy"></a> [force\_destroy](#input\_force\_destroy) | Permit terraform destroy to delete a non-empty bucket. Leave false in prod. | `bool` | `false` | no |
@@ -148,7 +144,6 @@ No modules.
 | <a name="input_lifecycle_prefix"></a> [lifecycle\_prefix](#input\_lifecycle\_prefix) | Object prefix the lifecycle rule applies to. Empty string = whole bucket. | `string` | `""` | no |
 | <a name="input_noncurrent_version_expiration_days"></a> [noncurrent\_version\_expiration\_days](#input\_noncurrent\_version\_expiration\_days) | Expire noncurrent versions after N days. Null = never. | `number` | `365` | no |
 | <a name="input_noncurrent_version_transition_days"></a> [noncurrent\_version\_transition\_days](#input\_noncurrent\_version\_transition\_days) | Transition noncurrent versions to GLACIER after N days. Null = skip. | `number` | `30` | no |
-| <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
 | <a name="input_restrict_public_buckets"></a> [restrict\_public\_buckets](#input\_restrict\_public\_buckets) | Restrict public bucket policies. | `bool` | `true` | no |
 | <a name="input_sse_algorithm"></a> [sse\_algorithm](#input\_sse\_algorithm) | Server-side encryption algorithm: AES256 or aws:kms. | `string` | `"AES256"` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Additional tags merged onto every resource. | `map(string)` | `{}` | no |
@@ -165,4 +160,4 @@ No modules.
 | <a name="output_bucket_hosted_zone_id"></a> [bucket\_hosted\_zone\_id](#output\_bucket\_hosted\_zone\_id) | Route53 hosted zone ID for the bucket's region (handy when fronting with CloudFront). |
 | <a name="output_bucket_id"></a> [bucket\_id](#output\_bucket\_id) | Bucket name (also the bucket ID). |
 | <a name="output_bucket_regional_domain_name"></a> [bucket\_regional\_domain\_name](#output\_bucket\_regional\_domain\_name) | Regional bucket domain name. Prefer this over bucket\_domain\_name in modern AWS regions. |
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- END_TF_DOCS -->

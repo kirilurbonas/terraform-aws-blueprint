@@ -1,0 +1,64 @@
+---
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+# Categories mirror the Keep a Changelog sections used in CHANGELOG.md so the
+# drafted notes and the hand-written changelog stay structurally identical.
+categories:
+  - title: 'Added'
+    labels: ['feature', 'enhancement']
+  - title: 'Changed'
+    labels: ['change']
+  - title: 'Fixed'
+    labels: ['fix', 'bug']
+  - title: 'Removed'
+    labels: ['removal']
+  - title: 'Security'
+    labels: ['security']
+  - title: 'Dependencies'
+    labels: ['dependencies']
+  - title: 'Documentation'
+    labels: ['documentation']
+
+exclude-labels:
+  - 'skip-changelog'
+
+change-template: '- $TITLE (#$NUMBER) @$AUTHOR'
+change-title-escapes: '\<*_&'
+
+version-resolver:
+  major:
+    labels: ['breaking']
+  minor:
+    labels: ['feature', 'enhancement', 'change', 'removal']
+  patch:
+    labels: ['fix', 'bug', 'dependencies', 'documentation', 'security']
+  default: patch
+
+autolabeler:
+  - label: 'documentation'
+    files: ['**/*.md']
+  - label: 'dependencies'
+    files: ['.github/workflows/*.yml', '**/.terraform.lock.hcl']
+  - label: 'fix'
+    title: ['/^fix(\(.*\))?:/i']
+  - label: 'feature'
+    title: ['/^feat(\(.*\))?:/i']
+  - label: 'change'
+    title: ['/^refactor(\(.*\))?:/i']
+  - label: 'breaking'
+    title: ['/!:/']
+    body: ['/BREAKING:/']
+
+template: |
+  ## What changed
+
+  $CHANGES
+
+  ---
+
+  **Full diff**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+  Pre-1.0 caveat: minor versions may contain breaking changes. See
+  [CHANGELOG.md](https://github.com/$OWNER/$REPOSITORY/blob/main/CHANGELOG.md)
+  for the migration notes that accompany them.

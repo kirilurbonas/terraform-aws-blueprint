@@ -25,20 +25,17 @@ repos:
           - --hook-config=--path-to-file=README.md
           - --hook-config=--add-to-existing-file=true
           - --hook-config=--create-file-if-not-exist=true
+          # Write the same <!-- BEGIN_TF_DOCS --> markers that
+          # .terraform-docs.yml declares, so the hook and `make docs` inject
+          # into the same block instead of each maintaining its own.
+          - --hook-config=--use-standard-markers=true
       - id: terraform_tflint
         args:
-          - --args=--only=terraform_deprecated_interpolation
-          - --args=--only=terraform_deprecated_index
-          - --args=--only=terraform_unused_declarations
-          - --args=--only=terraform_comment_syntax
-          - --args=--only=terraform_documented_outputs
-          - --args=--only=terraform_documented_variables
-          - --args=--only=terraform_typed_variables
-          - --args=--only=terraform_module_pinned_source
-          - --args=--only=terraform_naming_convention
-          - --args=--only=terraform_required_version
-          - --args=--only=terraform_required_providers
-          - --args=--only=terraform_standard_module_structure
+          # Rules live in the shared .tflint.hcl at the repo root so that
+          # pre-commit and CI enforce exactly the same set. Passing --only
+          # here would silently narrow it back down.
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+          - --args=--minimum-failure-severity=warning
       - id: terraform_trivy
         args:
           - --args=--severity=HIGH,CRITICAL

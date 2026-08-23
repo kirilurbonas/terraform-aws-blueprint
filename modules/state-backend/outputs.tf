@@ -28,5 +28,3 @@ output "backend_config_hcl" {
     encrypt        = true
   EOT
 }
-
-data "aws_region" "current" {}

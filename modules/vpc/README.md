@@ -84,25 +84,20 @@ module "vpc" {
 | `interface_endpoint_ids` | Map of interface endpoint service short name → endpoint ID. |
 
 <!-- BEGIN_TF_DOCS -->
-<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
-<!-- END_TF_DOCS -->
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0, < 7.0 |
 
-## Modules
 
-No modules.
 
 ## Resources
 
@@ -142,21 +137,21 @@ No modules.
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_availability_zones"></a> [availability\_zones](#input\_availability\_zones) | List of AZs to deploy subnets into. At least 2 required for production HA. | `list(string)` | n/a | yes |
+| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (e.g. dev, staging, prod). Drives tagging and lifecycle behavior. | `string` | n/a | yes |
+| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Prefix applied to all named resources (e.g. `platform`). | `string` | n/a | yes |
+| <a name="input_project"></a> [project](#input\_project) | Project name tag applied to every resource for cost allocation. | `string` | n/a | yes |
+| <a name="input_vpc_cidr"></a> [vpc\_cidr](#input\_vpc\_cidr) | CIDR block for the VPC. Must be a valid IPv4 CIDR with prefix length /16 - /24. | `string` | n/a | yes |
 | <a name="input_enable_flow_logs"></a> [enable\_flow\_logs](#input\_enable\_flow\_logs) | Enable VPC Flow Logs. Logs go to the bucket at `flow_logs_s3_bucket_arn` if set, otherwise to a module-managed bucket. | `bool` | `true` | no |
 | <a name="input_enable_nat_gateway"></a> [enable\_nat\_gateway](#input\_enable\_nat\_gateway) | Whether to provision NAT gateways for private subnet egress. | `bool` | `true` | no |
 | <a name="input_enable_s3_gateway_endpoint"></a> [enable\_s3\_gateway\_endpoint](#input\_enable\_s3\_gateway\_endpoint) | Provision a gateway endpoint for S3 (free, attaches to private route tables, saves NAT egress). | `bool` | `true` | no |
-| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (e.g. dev, staging, prod). Drives tagging and lifecycle behavior. | `string` | n/a | yes |
 | <a name="input_flow_logs_file_format"></a> [flow\_logs\_file\_format](#input\_flow\_logs\_file\_format) | S3 file format for VPC flow logs: plain-text or parquet. | `string` | `"plain-text"` | no |
 | <a name="input_flow_logs_hive_compatible_partitions"></a> [flow\_logs\_hive\_compatible\_partitions](#input\_flow\_logs\_hive\_compatible\_partitions) | Whether to use hive-compatible S3 key prefixes for VPC flow log delivery. | `bool` | `false` | no |
 | <a name="input_flow_logs_per_hour_partition"></a> [flow\_logs\_per\_hour\_partition](#input\_flow\_logs\_per\_hour\_partition) | Whether to partition VPC flow log objects by hour instead of day. | `bool` | `false` | no |
 | <a name="input_flow_logs_retention_days"></a> [flow\_logs\_retention\_days](#input\_flow\_logs\_retention\_days) | Number of days to retain VPC flow logs in S3 before expiration. | `number` | `365` | no |
 | <a name="input_flow_logs_s3_bucket_arn"></a> [flow\_logs\_s3\_bucket\_arn](#input\_flow\_logs\_s3\_bucket\_arn) | Optional pre-existing S3 bucket ARN for flow logs. If null, the module creates a dedicated bucket. | `string` | `null` | no |
 | <a name="input_interface_endpoints"></a> [interface\_endpoints](#input\_interface\_endpoints) | Service short names (e.g. ecr.api, ecr.dkr, sts, logs, ec2) to expose as interface endpoints in the private subnets. Each one costs per-AZ + per-GB but is cheaper than NAT for chatty workloads. | `list(string)` | `[]` | no |
-| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Prefix applied to all named resources (e.g. `platform`). | `string` | n/a | yes |
 | <a name="input_nat_gateway_mode"></a> [nat\_gateway\_mode](#input\_nat\_gateway\_mode) | NAT gateway topology: `single` (one shared NAT, cost-optimized) or `per_az` (NAT in every AZ, HA). | `string` | `"per_az"` | no |
-| <a name="input_project"></a> [project](#input\_project) | Project name tag applied to every resource for cost allocation. | `string` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | Additional tags merged onto every resource. | `map(string)` | `{}` | no |
-| <a name="input_vpc_cidr"></a> [vpc\_cidr](#input\_vpc\_cidr) | CIDR block for the VPC. Must be a valid IPv4 CIDR with prefix length /16 - /24. | `string` | n/a | yes |
 
 ## Outputs
 
@@ -178,4 +173,4 @@ No modules.
 | <a name="output_vpc_arn"></a> [vpc\_arn](#output\_vpc\_arn) | ARN of the VPC. |
 | <a name="output_vpc_cidr_block"></a> [vpc\_cidr\_block](#output\_vpc\_cidr\_block) | CIDR block of the VPC. |
 | <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | ID of the VPC. |
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- END_TF_DOCS -->

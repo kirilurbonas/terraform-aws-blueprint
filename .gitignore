@@ -3,7 +3,12 @@
 *.tfstate.*
 *.tfstate.backup
 .terraform/
+
+# Reusable modules must not pin provider versions, so their lock files stay out
+# of the repo. Examples are root modules: pinning them keeps example CI
+# reproducible, so their lock files are tracked.
 .terraform.lock.hcl
+!examples/*/.terraform.lock.hcl
 
 # Variable files containing secrets
 *.tfvars
@@ -17,6 +22,8 @@ crash.*.log
 
 # Override files
 override.tf
+# ...except the one the prod-overrides example exists to demonstrate.
+!examples/prod-overrides/override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json

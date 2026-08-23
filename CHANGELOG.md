@@ -10,6 +10,36 @@ are explicitly called out under each release.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-23
+
+Two things at once: the module work that had been sitting unreleased, and a
+foundation pass that fixes the tooling which was supposed to be enforcing this
+library's quality bar. Along the way the foundation work exposed a provider
+constraint that was never true.
+
+### Fixed
+
+- **The `aws >= 5.40` provider floor was wrong.** `vpc` and `state-backend`
+  read `data.aws_region.current.region`, an attribute the AWS provider only
+  exposes from v6.0 onward, so those two modules failed at `terraform validate`
+  for anyone pinned below v6 — despite every module advertising `>= 5.40`. The
+  constraint is now `>= 6.0, < 7.0` across the library, and CI validates every
+  module against the declared floor so this cannot recur.
+- **tflint's AWS ruleset never ran.** There was no `.tflint.hcl` anywhere in
+  the tree, so `tflint --init` installed no plugins. Worse, `tflint --recursive`
+  re-reads config from each working directory, so a root config alone is not
+  enough — `TFLINT_CONFIG_FILE` must point at an absolute path or every
+  subdirectory silently falls back to the bundled terraform ruleset. Both are
+  fixed, and CI now asserts the AWS ruleset actually loaded before linting.
+- **The `prod-overrides` example was incomplete in the repository.** The
+  blanket `override.tf` rule in `.gitignore` excluded
+  `examples/prod-overrides/override.tf` — the single file that example exists
+  to demonstrate — so anyone cloning the repo got a README linking to a file
+  that was not there. The example also gained the `outputs.tf` that
+  `terraform_standard_module_structure` expects.
+- **Security findings never reached GitHub code scanning.** The workflow
+  requested `security-events: write` but nothing uploaded SARIF.
+
 ### Added
 
 - **VPC flow-log hardening** — the `vpc` module now hardens its module-managed
@@ -22,6 +52,27 @@ are explicitly called out under each release.
   groups for exported database logs (primary + replicas) with configurable
   retention and optional KMS encryption via
   `cloudwatch_log_retention_days` / `cloudwatch_log_kms_key_arn`.
+- **`ROADMAP.md`** — milestones through `v1.0.0`, which breaking changes are
+  staged behind opt-in flags, and what has been explicitly ruled out.
+- **`Makefile`** — `fmt`, `validate`, `validate-floor`, `lint`, `test`,
+  `docs-check`, `security`, `all`. CI calls the same targets, so local checks
+  and CI cannot drift.
+- **`.tflint.hcl`** — shared rule set (terraform ruleset at `preset = "all"`
+  plus the AWS ruleset) used by both CI and pre-commit.
+- **Provider-floor CI job** — re-validates every module with `aws` pinned to
+  the floor of its declared constraint.
+- **Release automation** — `.github/workflows/release-drafter.yml` and
+  `.github/release-drafter.yml`. `CONTRIBUTING.md` had documented a
+  release-drafter workflow since 0.2.0; it now exists, and the PR labels it
+  keys off are documented.
+- **terraform-docs drift job** — CI fails when regenerating docs would change a
+  file.
+- **Committed lock files for the examples**, with hashes for `linux_amd64`,
+  `linux_arm64`, `darwin_amd64`, and `darwin_arm64`. Examples are root modules,
+  so pinning them makes example CI reproducible; the modules themselves stay
+  unpinned by design. Dependabot now watches them.
+- **CI hygiene** — concurrency cancellation, `workflow_dispatch`, and a
+  `pre-commit` job covering the repo-hygiene hooks.
 
 ### Changed
 
@@ -34,6 +85,31 @@ are explicitly called out under each release.
   naming inputs, and KMS requirements for strict S3 encryption.
 - **S3 strict upload enforcement** — the `s3-secure` module now denies uploads
   that use the wrong SSE algorithm and, in KMS mode, the wrong key ID.
+- **tfsec replaced by Trivy.** tfsec is archived upstream and folded into
+  Trivy, yet CI ran tfsec while pre-commit ran Trivy. One scanner now, in both
+  places: every severity is reported to GitHub code scanning, and HIGH/CRITICAL
+  gate the build. The switch surfaced three findings, recorded with written
+  justifications in `.trivyignore.yaml` — unrestricted EKS egress and
+  `map_public_ip_on_launch` on public subnets are deliberate and suppressed
+  permanently; the flow-log bucket's lack of a customer-managed-key option is a
+  real gap, so its suppression expires and is tracked for v0.4.0.
+- **terraform-docs markers normalized** to `<!-- BEGIN_TF_DOCS -->` across
+  modules and examples. Module READMEs previously carried a dead, empty
+  `BEGIN_TF_DOCS` placeholder alongside the real block written by pre-commit
+  under different markers. The generated tables now also include Modules, and
+  empty sections are omitted.
+- **Examples now `terraform init -lockfile=readonly`** in CI, so a stale
+  committed lock file fails the build instead of being silently rewritten.
+- `modules/state-backend`: the `aws_region` data source moved from `outputs.tf`
+  to `main.tf`, matching every other module. No behaviour change.
+
+### Upgrading from 0.2.x
+
+No variable or output changes. The only thing that can block an upgrade is the
+provider constraint: if you pin `aws ~> 5.x`, move to `~> 6.0`. Modules other
+than `vpc` and `state-backend` did work on 5.40 and now require 6.0 as well —
+the library carries a single floor so that the requirement is stated once and
+tested once.
 
 ## [0.2.1] - 2026-05-25
 

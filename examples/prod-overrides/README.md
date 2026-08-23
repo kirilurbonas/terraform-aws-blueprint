@@ -36,19 +36,19 @@ terraform plan
 - For Terraform ≥ 1.5 you can also use `removed` / `import` blocks for more
   surgical state manipulation, but `prevent_destroy` itself still needs the
   override pattern.
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- BEGIN_TF_DOCS -->
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0, < 7.0 |
 
 ## Modules
 
@@ -72,5 +72,9 @@ terraform plan
 
 ## Outputs
 
-No outputs.
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_bucket_id"></a> [bucket\_id](#output\_bucket\_id) | Name of the S3 bucket that override.tf protects. |
+| <a name="output_rds_instance_id"></a> [rds\_instance\_id](#output\_rds\_instance\_id) | Identifier of the RDS instance that override.tf protects. |
+| <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | ID of the VPC backing this example. |
+<!-- END_TF_DOCS -->

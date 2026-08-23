@@ -69,25 +69,20 @@ terraform {
 | `backend_config_hcl` | Ready-to-paste backend block body. |
 
 <!-- BEGIN_TF_DOCS -->
-<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
-<!-- END_TF_DOCS -->
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0, < 7.0 |
 
-## Modules
 
-No modules.
 
 ## Resources
 
@@ -110,10 +105,10 @@ No modules.
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_bucket_name"></a> [bucket\_name](#input\_bucket\_name) | S3 bucket name (globally unique) that will hold Terraform state. | `string` | n/a | yes |
 | <a name="input_environment"></a> [environment](#input\_environment) | Environment tag. | `string` | n/a | yes |
-| <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | Optional customer-managed KMS key for state encryption (S3 + DynamoDB). Null = AWS-managed. | `string` | `null` | no |
 | <a name="input_lock_table_name"></a> [lock\_table\_name](#input\_lock\_table\_name) | DynamoDB table name for state locks. | `string` | n/a | yes |
-| <a name="input_noncurrent_version_expiration_days"></a> [noncurrent\_version\_expiration\_days](#input\_noncurrent\_version\_expiration\_days) | Days to retain old state versions before lifecycle expiration. | `number` | `365` | no |
 | <a name="input_project"></a> [project](#input\_project) | Project tag. | `string` | n/a | yes |
+| <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | Optional customer-managed KMS key for state encryption (S3 + DynamoDB). Null = AWS-managed. | `string` | `null` | no |
+| <a name="input_noncurrent_version_expiration_days"></a> [noncurrent\_version\_expiration\_days](#input\_noncurrent\_version\_expiration\_days) | Days to retain old state versions before lifecycle expiration. | `number` | `365` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Additional tags. | `map(string)` | `{}` | no |
 
 ## Outputs
@@ -125,4 +120,4 @@ No modules.
 | <a name="output_bucket_name"></a> [bucket\_name](#output\_bucket\_name) | Name of the state bucket. |
 | <a name="output_lock_table_arn"></a> [lock\_table\_arn](#output\_lock\_table\_arn) | ARN of the DynamoDB lock table. |
 | <a name="output_lock_table_name"></a> [lock\_table\_name](#output\_lock\_table\_name) | Name of the DynamoDB lock table. |
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- END_TF_DOCS -->

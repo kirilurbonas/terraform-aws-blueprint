@@ -7,22 +7,40 @@ on:
     paths:
       - '**.tf'
       - '**.tftest.hcl'
+      - '**/.terraform.lock.hcl'
+      - '.tflint.hcl'
+      - '.terraform-docs.yml'
+      - '.pre-commit-config.yaml'
+      - 'Makefile'
       - '.github/workflows/terraform-validate.yml'
   push:
     branches: [main]
     paths:
       - '**.tf'
       - '**.tftest.hcl'
+      - '**/.terraform.lock.hcl'
+      - '.tflint.hcl'
+      - '.terraform-docs.yml'
+      - '.pre-commit-config.yaml'
+      - 'Makefile'
       - '.github/workflows/terraform-validate.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: write
-  security-events: write
+
+# A newer push to the same ref makes the in-flight run redundant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
+  # The floor of the `aws` provider constraint every module declares. The
+  # floor-validate job pins to it so a module that quietly starts depending on
+  # a newer provider feature fails here instead of in a consumer's stack.
+  AWS_PROVIDER_FLOOR: "6.0.0"
 
 jobs:
   fmt:
@@ -72,6 +90,38 @@ jobs:
       - working-directory: ${{ matrix.dir }}
         run: terraform validate -no-color
 
+  validate-modules-provider-floor:
+    name: validate ${{ matrix.dir }} @ provider floor
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJson(needs.discover.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - name: pin the aws provider to the declared floor
+        working-directory: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          cat > zz_provider_floor_override.tf <<EOF
+          terraform {
+            required_providers {
+              aws = {
+                source  = "hashicorp/aws"
+                version = "${AWS_PROVIDER_FLOOR}"
+              }
+            }
+          }
+          EOF
+      - working-directory: ${{ matrix.dir }}
+        run: terraform init -backend=false
+      - working-directory: ${{ matrix.dir }}
+        run: terraform validate -no-color
+
   validate-examples:
     name: validate ${{ matrix.dir }}
     needs: discover
@@ -85,8 +135,10 @@ jobs:
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
+      # Examples are root modules and ship a committed lock file, so init must
+      # honour it rather than silently resolving something else.
       - working-directory: ${{ matrix.dir }}
-        run: terraform init -backend=false
+        run: terraform init -backend=false -lockfile=readonly
       - working-directory: ${{ matrix.dir }}
         run: terraform validate -no-color
 
@@ -124,30 +176,105 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/cache@v6
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ hashFiles('.tflint.hcl') }}
       - uses: terraform-linters/setup-tflint@v6
         with:
           tflint_version: latest
-      - run: tflint --init
+      # `make lint` is the same entry point developers run locally, so the
+      # rule set and invocation cannot drift between here and a workstation.
+      - run: make lint
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: tflint --recursive --minimum-failure-severity=warning
 
-  tfsec:
-    name: tfsec
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+      # Two passes on purpose. The first reports every severity to the
+      # Security tab without gating; the second gates the build on
+      # HIGH/CRITICAL only. Collapsing them would either hide MEDIUM findings
+      # from code scanning or turn them into build failures.
+      - name: Trivy misconfiguration scan (report all severities)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          skip-dirs: '**/.terraform'
+          trivyignores: .trivyignore.yaml
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '0'
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-config
+      - name: Trivy misconfiguration scan (gate on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          skip-dirs: '**/.terraform'
+          trivyignores: .trivyignore.yaml
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+  docs:
+    name: terraform-docs drift
+    runs-on: ubuntu-latest
+    env:
+      TERRAFORM_DOCS_VERSION: v0.24.0
+    steps:
+      - uses: actions/checkout@v6
+      - name: install terraform-docs
+        run: |
+          set -euo pipefail
+          curl -sSL "https://terraform-docs.io/dl/${TERRAFORM_DOCS_VERSION}/terraform-docs-${TERRAFORM_DOCS_VERSION}-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin terraform-docs
+          chmod +x /usr/local/bin/terraform-docs
+      # Same target developers run, driven by the same .terraform-docs.yml, so
+      # a passing local `make docs-check` guarantees a passing job.
+      - run: make docs-check
+
+  pre-commit:
+    name: pre-commit (non-terraform hooks)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Run tfsec
-        uses: aquasecurity/tfsec-action@v1.0.3
+      - uses: actions/setup-python@v7
         with:
-          soft_fail: false
-          additional_args: --minimum-severity HIGH
+          python-version: '3.x'
+      # The terraform hooks have dedicated jobs above; this catches drift in
+      # the repo-hygiene hooks (yaml, EOF, line endings, private keys).
+      - run: pipx run pre-commit run --all-files --config .pre-commit-config.yaml
+        env:
+          SKIP: terraform_fmt,terraform_validate,terraform_docs,terraform_tflint,terraform_trivy
 
   comment:
     name: PR validation summary
     if: github.event_name == 'pull_request' && always()
-    needs: [fmt, validate-modules, validate-examples, test-modules, tflint, tfsec]
+    needs:
+      - fmt
+      - validate-modules
+      - validate-modules-provider-floor
+      - validate-examples
+      - test-modules
+      - tflint
+      - trivy
+      - docs
+      - pre-commit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Sticky PR comment
         uses: marocchino/sticky-pull-request-comment@v3
@@ -160,9 +287,12 @@ jobs:
             | --- | --- |
             | terraform fmt | ${{ needs.fmt.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.fmt.result }} |
             | module validate | ${{ needs.validate-modules.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.validate-modules.result }} |
+            | module validate @ provider floor | ${{ needs.validate-modules-provider-floor.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.validate-modules-provider-floor.result }} |
             | example validate | ${{ needs.validate-examples.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.validate-examples.result }} |
             | terraform test | ${{ needs.test-modules.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.test-modules.result }} |
             | tflint | ${{ needs.tflint.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.tflint.result }} |
-            | tfsec | ${{ needs.tfsec.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.tfsec.result }} |
+            | trivy | ${{ needs.trivy.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.trivy.result }} |
+            | terraform-docs drift | ${{ needs.docs.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.docs.result }} |
+            | pre-commit | ${{ needs.pre-commit.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.pre-commit.result }} |
 
             _Workflow run: ${{ github.run_id }}_
