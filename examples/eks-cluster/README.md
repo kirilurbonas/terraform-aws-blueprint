@@ -39,19 +39,19 @@ kubectl get nodes
 This is the cluster the README says it is — production-shaped, not a toy.
 Drop `interface_endpoints = []` and `nat_gateway_mode = "single"` in your
 own copy to halve the bill for a sandbox. Run `terraform destroy` when done.
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- BEGIN_TF_DOCS -->
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0, < 7.0 |
 
 ## Modules
 
@@ -86,4 +86,4 @@ own copy to halve the bill for a sandbox. Run `terraform destroy` when done.
 | <a name="output_kubeconfig_command"></a> [kubeconfig\_command](#output\_kubeconfig\_command) | Run this to populate ~/.kube/config. |
 | <a name="output_private_subnet_ids"></a> [private\_subnet\_ids](#output\_private\_subnet\_ids) | Private subnet IDs used by the cluster. |
 | <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | VPC ID. |
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- END_TF_DOCS -->

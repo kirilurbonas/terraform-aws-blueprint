@@ -13,6 +13,8 @@ content: |-
 
   {{ .Providers }}
 
+  {{ .Modules }}
+
   {{ .Resources }}
 
   {{ .Inputs }}
@@ -37,10 +39,16 @@ settings:
   default: true
   description: true
   escape: true
-  hide-empty: false
+  hide-empty: true
   html: true
   indent: 2
-  lockfile: true
+  # false on purpose: with lockfile resolution on, the Providers table renders
+  # whatever version happens to be installed locally, so the generated docs
+  # differ between a developer's machine and a CI checkout that never ran
+  # `terraform init` — and every upstream provider release dirties 11
+  # READMEs. Off, the table shows the declared constraint, which is the thing
+  # consumers actually need to know.
+  lockfile: false
   read-comments: true
   required: true
   sensitive: true

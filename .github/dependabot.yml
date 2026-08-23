@@ -50,3 +50,26 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies", "terraform"]
+
+  # Examples are root modules with committed lock files, so they get provider
+  # bumps of their own. Modules above stay unpinned by design.
+  - package-ecosystem: terraform
+    directory: /examples/simple-vpc
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]
+  - package-ecosystem: terraform
+    directory: /examples/eks-cluster
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]
+  - package-ecosystem: terraform
+    directory: /examples/full-stack
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]
+  - package-ecosystem: terraform
+    directory: /examples/prod-overrides
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]

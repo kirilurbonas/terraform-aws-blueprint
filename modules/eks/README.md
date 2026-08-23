@@ -163,25 +163,20 @@ no caller action required.
 | `kubeconfig_command` | Shell command to update kubeconfig. |
 
 <!-- BEGIN_TF_DOCS -->
-<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
-<!-- END_TF_DOCS -->
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0, < 7.0 |
 
-## Modules
 
-No modules.
 
 ## Resources
 
@@ -220,6 +215,13 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (dev, staging, prod). | `string` | n/a | yes |
+| <a name="input_kubernetes_version"></a> [kubernetes\_version](#input\_kubernetes\_version) | EKS control plane Kubernetes version (e.g. "1.30"). | `string` | n/a | yes |
+| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Prefix applied to all named resources. | `string` | n/a | yes |
+| <a name="input_node_groups"></a> [node\_groups](#input\_node\_groups) | Map of managed node groups, keyed by short name (e.g. system, apps, gpu). Mix ON\_DEMAND/SPOT, instance families, and taints per group. | <pre>map(object({<br/>    capacity_type  = optional(string, "ON_DEMAND")<br/>    instance_types = optional(list(string), ["t3.large"])<br/>    ami_type       = optional(string, "AL2023_x86_64_STANDARD")<br/>    disk_size_gb   = optional(number, 50)<br/>    desired_size   = optional(number, 2)<br/>    min_size       = optional(number, 1)<br/>    max_size       = optional(number, 5)<br/>    labels         = optional(map(string), {})<br/>    taints = optional(list(object({<br/>      key    = string<br/>      value  = string<br/>      effect = string<br/>    })), [])<br/>    enable_ssm_access  = optional(bool, true)<br/>    max_unavailable_pc = optional(number, 33)<br/>  }))</pre> | n/a | yes |
+| <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
+| <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | Subnet IDs for cluster ENIs and node groups. Use private subnets in production. | `list(string)` | n/a | yes |
+| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC ID the cluster lives in. | `string` | n/a | yes |
 | <a name="input_access_entries"></a> [access\_entries](#input\_access\_entries) | Access entries to create on the cluster, keyed by a stable name. Each may include policy associations (e.g. AmazonEKSClusterAdminPolicy scoped to cluster, AmazonEKSAdminPolicy scoped to a namespace). | <pre>map(object({<br/>    principal_arn     = string<br/>    type              = optional(string, "STANDARD")<br/>    kubernetes_groups = optional(list(string))<br/>    user_name         = optional(string)<br/>    policy_associations = optional(list(object({<br/>      policy_arn = string<br/>      access_scope = object({<br/>        type       = string<br/>        namespaces = optional(list(string))<br/>      })<br/>    })), [])<br/>  }))</pre> | `{}` | no |
 | <a name="input_authentication_mode"></a> [authentication\_mode](#input\_authentication\_mode) | Authentication mode for the cluster. API uses access entries only; API\_AND\_CONFIG\_MAP keeps aws-auth around as well. | `string` | `"API"` | no |
 | <a name="input_bootstrap_cluster_creator_admin_permissions"></a> [bootstrap\_cluster\_creator\_admin\_permissions](#input\_bootstrap\_cluster\_creator\_admin\_permissions) | Whether the IAM principal that runs terraform apply gets a built-in cluster-admin access entry. | `bool` | `true` | no |
@@ -227,17 +229,10 @@ No modules.
 | <a name="input_enabled_cluster_log_types"></a> [enabled\_cluster\_log\_types](#input\_enabled\_cluster\_log\_types) | Control plane log streams to ship to CloudWatch. | `list(string)` | <pre>[<br/>  "api",<br/>  "audit",<br/>  "authenticator",<br/>  "controllerManager",<br/>  "scheduler"<br/>]</pre> | no |
 | <a name="input_endpoint_public_access"></a> [endpoint\_public\_access](#input\_endpoint\_public\_access) | Whether the cluster API server is reachable from the public internet. | `bool` | `false` | no |
 | <a name="input_endpoint_public_access_cidrs"></a> [endpoint\_public\_access\_cidrs](#input\_endpoint\_public\_access\_cidrs) | CIDR blocks permitted on the public endpoint. Ignored when endpoint\_public\_access = false. | `list(string)` | <pre>[<br/>  "0.0.0.0/0"<br/>]</pre> | no |
-| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (dev, staging, prod). | `string` | n/a | yes |
 | <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | Optional KMS key ARN for secrets envelope encryption. If null, a key is created. | `string` | `null` | no |
-| <a name="input_kubernetes_version"></a> [kubernetes\_version](#input\_kubernetes\_version) | EKS control plane Kubernetes version (e.g. "1.30"). | `string` | n/a | yes |
 | <a name="input_log_retention_days"></a> [log\_retention\_days](#input\_log\_retention\_days) | CloudWatch log group retention for cluster logs. | `number` | `90` | no |
-| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Prefix applied to all named resources. | `string` | n/a | yes |
-| <a name="input_node_groups"></a> [node\_groups](#input\_node\_groups) | Map of managed node groups, keyed by short name (e.g. system, apps, gpu). Mix ON\_DEMAND/SPOT, instance families, and taints per group. | <pre>map(object({<br/>    capacity_type  = optional(string, "ON_DEMAND")<br/>    instance_types = optional(list(string), ["t3.large"])<br/>    ami_type       = optional(string, "AL2023_x86_64_STANDARD")<br/>    disk_size_gb   = optional(number, 50)<br/>    desired_size   = optional(number, 2)<br/>    min_size       = optional(number, 1)<br/>    max_size       = optional(number, 5)<br/>    labels         = optional(map(string), {})<br/>    taints = optional(list(object({<br/>      key    = string<br/>      value  = string<br/>      effect = string<br/>    })), [])<br/>    enable_ssm_access  = optional(bool, true)<br/>    max_unavailable_pc = optional(number, 33)<br/>  }))</pre> | n/a | yes |
 | <a name="input_oidc_thumbprint_list"></a> [oidc\_thumbprint\_list](#input\_oidc\_thumbprint\_list) | Thumbprints for the IAM OIDC provider. Default is the Amazon Root CA 1 thumbprint that backs every public EKS issuer. | `list(string)` | <pre>[<br/>  "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"<br/>]</pre> | no |
-| <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
-| <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | Subnet IDs for cluster ENIs and node groups. Use private subnets in production. | `list(string)` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | Additional tags merged onto every resource. | `map(string)` | `{}` | no |
-| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC ID the cluster lives in. | `string` | n/a | yes |
 
 ## Outputs
 
@@ -258,4 +253,4 @@ No modules.
 | <a name="output_node_iam_role_arn"></a> [node\_iam\_role\_arn](#output\_node\_iam\_role\_arn) | ARN of the IAM role assumed by worker nodes. Use this in access entries and IRSA trust policies that need to recognize node identity. |
 | <a name="output_node_security_group_id"></a> [node\_security\_group\_id](#output\_node\_security\_group\_id) | Security group ID attached to worker nodes. |
 | <a name="output_oidc_provider_arn"></a> [oidc\_provider\_arn](#output\_oidc\_provider\_arn) | ARN of the IAM OIDC provider that backs IRSA for this cluster. |
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- END_TF_DOCS -->

@@ -106,27 +106,22 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | `read_replica_ids` | Map of replica name → RDS instance identifier. |
 
 <!-- BEGIN_TF_DOCS -->
-<!-- terraform-docs auto-generates the full requirements / providers / resources / inputs / outputs tables here when the pre-commit hook runs. The hand-written inputs/outputs tables above stay; this block is appended below them. -->
-<!-- END_TF_DOCS -->
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
 ## Requirements
 
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.5.0 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.40 |
-| <a name="requirement_random"></a> [random](#requirement\_random) | >= 3.5 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0, < 7.0 |
+| <a name="requirement_random"></a> [random](#requirement\_random) | >= 3.5, < 4.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.46.0 |
-| <a name="provider_random"></a> [random](#provider\_random) | 3.9.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0, < 7.0 |
+| <a name="provider_random"></a> [random](#provider\_random) | >= 3.5, < 4.0 |
 
-## Modules
 
-No modules.
 
 ## Resources
 
@@ -151,6 +146,15 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_db_name"></a> [db\_name](#input\_db\_name) | Initial database name created inside the instance. | `string` | n/a | yes |
+| <a name="input_engine"></a> [engine](#input\_engine) | Database engine. Supported: postgres, mysql. | `string` | n/a | yes |
+| <a name="input_engine_version"></a> [engine\_version](#input\_engine\_version) | RDS engine version (e.g. "16.3" for postgres, "8.0.36" for mysql). | `string` | n/a | yes |
+| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (dev, staging, prod). | `string` | n/a | yes |
+| <a name="input_instance_class"></a> [instance\_class](#input\_instance\_class) | RDS instance class (e.g. db.t3.medium, db.m6i.large). | `string` | n/a | yes |
+| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Prefix applied to all named resources. | `string` | n/a | yes |
+| <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
+| <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | Subnet IDs for the DB subnet group. Should be private. | `list(string)` | n/a | yes |
+| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC where the DB security group is created. | `string` | n/a | yes |
 | <a name="input_allocated_storage_gb"></a> [allocated\_storage\_gb](#input\_allocated\_storage\_gb) | Initial allocated storage in GiB. | `number` | `100` | no |
 | <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to reach the DB port. | `list(string)` | `[]` | no |
 | <a name="input_allowed_security_group_ids"></a> [allowed\_security\_group\_ids](#input\_allowed\_security\_group\_ids) | Security group IDs allowed to reach the DB port. | `list(string)` | `[]` | no |
@@ -159,31 +163,22 @@ No modules.
 | <a name="input_backup_window"></a> [backup\_window](#input\_backup\_window) | Preferred backup window in UTC (e.g. "03:00-04:00"). | `string` | `"03:00-04:00"` | no |
 | <a name="input_cloudwatch_log_kms_key_arn"></a> [cloudwatch\_log\_kms\_key\_arn](#input\_cloudwatch\_log\_kms\_key\_arn) | Optional KMS key ARN for encrypting the CloudWatch log groups that receive exported DB logs. | `string` | `null` | no |
 | <a name="input_cloudwatch_log_retention_days"></a> [cloudwatch\_log\_retention\_days](#input\_cloudwatch\_log\_retention\_days) | Retention in days for the CloudWatch log groups that receive exported DB logs. | `number` | `90` | no |
-| <a name="input_db_name"></a> [db\_name](#input\_db\_name) | Initial database name created inside the instance. | `string` | n/a | yes |
 | <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Block the instance from being deleted without first removing this flag. | `bool` | `true` | no |
-| <a name="input_engine"></a> [engine](#input\_engine) | Database engine. Supported: postgres, mysql. | `string` | n/a | yes |
-| <a name="input_engine_version"></a> [engine\_version](#input\_engine\_version) | RDS engine version (e.g. "16.3" for postgres, "8.0.36" for mysql). | `string` | n/a | yes |
-| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment (dev, staging, prod). | `string` | n/a | yes |
 | <a name="input_extra_parameters"></a> [extra\_parameters](#input\_extra\_parameters) | Additional DB parameters merged on top of the engine defaults. | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
-| <a name="input_instance_class"></a> [instance\_class](#input\_instance\_class) | RDS instance class (e.g. db.t3.medium, db.m6i.large). | `string` | n/a | yes |
 | <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | Customer-managed KMS key for storage / Performance Insights / Secrets Manager. Null = AWS-managed key. | `string` | `null` | no |
 | <a name="input_maintenance_window"></a> [maintenance\_window](#input\_maintenance\_window) | Preferred maintenance window in UTC (e.g. "Sun:04:30-Sun:05:30"). | `string` | `"Sun:04:30-Sun:05:30"` | no |
 | <a name="input_master_username"></a> [master\_username](#input\_master\_username) | Master DB username. | `string` | `"dbadmin"` | no |
 | <a name="input_max_allocated_storage_gb"></a> [max\_allocated\_storage\_gb](#input\_max\_allocated\_storage\_gb) | Upper bound for storage autoscaling. Set equal to allocated\_storage\_gb to disable. | `number` | `500` | no |
 | <a name="input_monitoring_interval"></a> [monitoring\_interval](#input\_monitoring\_interval) | Enhanced Monitoring interval in seconds. 0 disables. Valid: 0, 1, 5, 10, 15, 30, 60. | `number` | `60` | no |
 | <a name="input_multi_az"></a> [multi\_az](#input\_multi\_az) | Deploy a synchronous standby in another AZ. | `bool` | `true` | no |
-| <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix) | Prefix applied to all named resources. | `string` | n/a | yes |
 | <a name="input_parameter_group_family"></a> [parameter\_group\_family](#input\_parameter\_group\_family) | Parameter group family (e.g. postgres16, mysql8.0). Derived from engine/version when null. | `string` | `null` | no |
 | <a name="input_performance_insights_enabled"></a> [performance\_insights\_enabled](#input\_performance\_insights\_enabled) | Enable Performance Insights. | `bool` | `true` | no |
 | <a name="input_performance_insights_retention_days"></a> [performance\_insights\_retention\_days](#input\_performance\_insights\_retention\_days) | Performance Insights retention in days. 7 is free; 31, 93, 186, 372, 731 require long-term retention pricing. | `number` | `7` | no |
 | <a name="input_port"></a> [port](#input\_port) | Listener port. Defaults to engine standard (5432 for postgres, 3306 for mysql). | `number` | `null` | no |
-| <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
 | <a name="input_read_replicas"></a> [read\_replicas](#input\_read\_replicas) | Map of read replicas to create, keyed by short name. Each replica inherits storage, parameter group, and SG from the primary; instance\_class defaults to the primary's class when null. | <pre>map(object({<br/>    instance_class = optional(string)<br/>    multi_az       = optional(bool, false)<br/>  }))</pre> | `{}` | no |
 | <a name="input_storage_encrypted"></a> [storage\_encrypted](#input\_storage\_encrypted) | Whether storage is encrypted at rest. | `bool` | `true` | no |
 | <a name="input_storage_type"></a> [storage\_type](#input\_storage\_type) | Storage type: gp3, io1, or io2. | `string` | `"gp3"` | no |
-| <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | Subnet IDs for the DB subnet group. Should be private. | `list(string)` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | Additional tags merged onto every resource. | `map(string)` | `{}` | no |
-| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC where the DB security group is created. | `string` | n/a | yes |
 
 ## Outputs
 
@@ -203,4 +198,4 @@ No modules.
 | <a name="output_read_replica_endpoints"></a> [read\_replica\_endpoints](#output\_read\_replica\_endpoints) | Map of replica name -> connection endpoint. |
 | <a name="output_read_replica_ids"></a> [read\_replica\_ids](#output\_read\_replica\_ids) | Map of replica name -> RDS instance identifier. |
 | <a name="output_security_group_id"></a> [security\_group\_id](#output\_security\_group\_id) | Security group ID guarding the RDS instance. |
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- END_TF_DOCS -->
