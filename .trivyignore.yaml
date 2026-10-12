@@ -42,3 +42,19 @@ misconfigurations:
     paths:
       - "modules/vpc/main.tf"
     statement: *publicip
+
+  # --- Internet-facing ALB: deliberate default --------------------------------
+  - id: AVD-AWS-0053
+    paths:
+      - "modules/alb/main.tf"
+    statement: &publicalb >-
+      The alb module defaults to internet-facing because it is the public
+      ingress path for EKS and ECS workloads. Exposure is limited to 443 with
+      a TLS 1.3 security policy enforced by validation, plus an optional
+      listener on 80 that can only issue a 301 to HTTPS; invalid headers are
+      dropped and desync mitigation is strictest. Private load balancers set
+      `internal = true`.
+  - id: AWS-0053
+    paths:
+      - "modules/alb/main.tf"
+    statement: *publicalb
