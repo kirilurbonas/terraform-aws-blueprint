@@ -324,6 +324,7 @@ for this destination.
 | <a name="output_public_subnet_cidrs"></a> [public\_subnet\_cidrs](#output\_public\_subnet\_cidrs) | CIDR blocks of the public subnets. |
 | <a name="output_public_subnet_ids"></a> [public\_subnet\_ids](#output\_public\_subnet\_ids) | List of public subnet IDs, ordered to match `availability_zones`. |
 | <a name="output_s3_gateway_endpoint_id"></a> [s3\_gateway\_endpoint\_id](#output\_s3\_gateway\_endpoint\_id) | ID of the S3 gateway endpoint, or null when disabled. |
+| <a name="output_s3_gateway_endpoint_prefix_list_id"></a> [s3\_gateway\_endpoint\_prefix\_list\_id](#output\_s3\_gateway\_endpoint\_prefix\_list\_id) | Managed prefix list of the S3 gateway endpoint, for security-group egress rules that should reach S3 (ECR image layers, for example) without opening 0.0.0.0/0. Null when disabled. |
 | <a name="output_vpc_arn"></a> [vpc\_arn](#output\_vpc\_arn) | ARN of the VPC. |
 | <a name="output_vpc_cidr_block"></a> [vpc\_cidr\_block](#output\_vpc\_cidr\_block) | CIDR block of the VPC. |
 | <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | ID of the VPC. |

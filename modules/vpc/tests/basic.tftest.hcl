@@ -610,3 +610,16 @@ run "rejects_endpoint_options_for_unlisted_endpoint" {
     }
   }
 }
+
+run "s3_gateway_prefix_list_output_null_when_disabled" {
+  command = plan
+
+  variables {
+    enable_s3_gateway_endpoint = false
+  }
+
+  assert {
+    condition     = output.s3_gateway_endpoint_prefix_list_id == null
+    error_message = "prefix list output should be null without the S3 gateway endpoint"
+  }
+}
