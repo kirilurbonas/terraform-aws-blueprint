@@ -17,3 +17,8 @@ output "alias_name" {
   description = "Full alias including the `alias/` prefix."
   value       = aws_kms_alias.this.name
 }
+
+output "replica_key_arns" {
+  description = "Map of region to replica key ARN. Empty when replica_regions is empty."
+  value       = { for region, key in aws_kms_replica_key.this : region => key.arn }
+}
