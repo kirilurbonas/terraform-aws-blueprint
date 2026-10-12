@@ -25,8 +25,11 @@ End-to-end reference deployment that ties every blueprint module together:
 Wiring highlights:
 
 - EKS nodes live in the VPC's private subnets.
-- RDS lives in the same private subnets; its security group only permits the
-  EKS node security group on the Postgres port.
+- RDS lives in a dedicated database subnet tier with no route to the
+  internet; its security group only permits the EKS node security group on
+  the Postgres port.
+- RDS manages its own master credential (`manage_master_password = true`), so
+  the password never appears in Terraform state.
 - A secure S3 bucket holds application artifacts.
 - An IRSA role binds the `app/app` Kubernetes ServiceAccount to scoped
   read/write permissions on the artifacts bucket — no static keys, no
@@ -52,9 +55,11 @@ kubectl annotate sa app -n app \
   "eks.amazonaws.com/role-arn=$(terraform output -raw app_irsa_role_arn)"
 ```
 
-The RDS master password is in Secrets Manager — read the ARN from
-`rds_master_secret_arn` and fetch it from the application via
+The RDS master password is in an RDS-managed Secrets Manager secret — read
+the ARN from `rds_master_secret_arn` and fetch it from the application via
 `secretsmanager:GetSecretValue` (grant via a second IRSA binding when needed).
+RDS rotates it on its own schedule, so read it at connection time rather than
+caching it.
 
 ## Approximate monthly cost
 
@@ -131,6 +136,6 @@ For an iterative dev environment, drop the read replica, switch RDS to
 | <a name="output_kubeconfig_command"></a> [kubeconfig\_command](#output\_kubeconfig\_command) | Shell command to update ~/.kube/config. |
 | <a name="output_private_subnet_ids"></a> [private\_subnet\_ids](#output\_private\_subnet\_ids) | Private subnet IDs. |
 | <a name="output_rds_endpoint"></a> [rds\_endpoint](#output\_rds\_endpoint) | RDS endpoint (host:port). |
-| <a name="output_rds_master_secret_arn"></a> [rds\_master\_secret\_arn](#output\_rds\_master\_secret\_arn) | Secrets Manager ARN for the RDS master credentials. |
+| <a name="output_rds_master_secret_arn"></a> [rds\_master\_secret\_arn](#output\_rds\_master\_secret\_arn) | Secrets Manager ARN of the RDS-managed master credentials. |
 | <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | VPC ID. |
 <!-- END_TF_DOCS -->
