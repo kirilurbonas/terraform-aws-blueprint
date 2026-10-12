@@ -10,6 +10,52 @@ are explicitly called out under each release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-12
+
+Three modules that the existing set could not serve a working application
+without, and an example that composes them. New modules start with the
+secure defaults on — there is no existing state to protect
+([ADR 0004](docs/adr/0004-opt-in-then-flip.md)).
+
+### Added
+
+- **`alb`** — Application Load Balancer. HTTPS listener restricted to
+  `ELBSecurityPolicy-TLS13-*` policies (validated) with a fixed-404 default;
+  optional HTTP listener that can only issue a 301 to HTTPS.
+  `drop_invalid_header_fields` is hard-coded on, desync mitigation defaults to
+  `strictest`, deletion protection on. Module-owned security group with
+  ingress from CIDRs or prefix lists and egress only to the VPC CIDR or named
+  target security groups. Target groups (`ip` / `instance` / `lambda`) and
+  host/path rules as maps; hash-suffixed names fit the 32-character limit and
+  allow `create_before_destroy`. Access and connection logs; optional WAFv2
+  association (`associate_web_acl` for ACLs created in the same apply).
+- **`aurora`** — Aurora PostgreSQL / MySQL. Storage encryption always on,
+  RDS-managed master secret (never in state), IAM auth on by default,
+  instances as a map, Serverless v2 with validated ACU ranges, optional reader
+  autoscaling, module-managed log groups (created before the cluster) and
+  cluster parameter group with logging defaults, backtrack (MySQL), advanced
+  Database Insights, and cluster-level alarms including replica lag.
+- **`ecr`** — repositories from a map with immutable tags, scan on push and
+  KMS encryption by default; a lifecycle policy on every repository (expire
+  untagged, keep N release tags, cap the rest); cross-account pull/push and
+  Lambda pull policies with `*` principals rejected; optional registry
+  scanning, pull-through cache rules, and cross-region replication.
+- **`examples/web-app`** — `vpc` (database tier) + `alb` + `aurora`
+  (Serverless v2) + `ecr` + `kms` + a GitHub-Actions-OIDC CI role that can
+  push to one repository. Security groups chain ALB → service → database
+  with static-key maps, so the whole stack plans in one pass.
+- `vpc` output `s3_gateway_endpoint_prefix_list_id`, so workloads can reach
+  S3 (ECR image layers) through the gateway endpoint without `0.0.0.0/0`
+  egress.
+- Dependabot entries for the new modules and example; Trivy suppression for
+  the internet-facing ALB default (AWS-0053), with justification.
+
+### Fixed
+
+- `examples/full-stack` output `rds_master_secret_arn` read
+  `master_secret_arn`, which is `null` now that the example uses the
+  RDS-managed secret; it reads `master_user_secret_arn`.
+
 ## [0.4.0] - 2026-10-12
 
 Module hardening, and a policy gate that plans every example for real. Every

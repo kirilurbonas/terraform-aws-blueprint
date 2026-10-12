@@ -50,6 +50,21 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies", "terraform"]
+  - package-ecosystem: terraform
+    directory: /modules/alb
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]
+  - package-ecosystem: terraform
+    directory: /modules/aurora
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]
+  - package-ecosystem: terraform
+    directory: /modules/ecr
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]
 
   # Examples are root modules with committed lock files, so they get provider
   # bumps of their own. Modules above stay unpinned by design.
@@ -70,6 +85,11 @@ updates:
     labels: ["dependencies", "terraform"]
   - package-ecosystem: terraform
     directory: /examples/prod-overrides
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "terraform"]
+  - package-ecosystem: terraform
+    directory: /examples/web-app
     schedule:
       interval: weekly
     labels: ["dependencies", "terraform"]

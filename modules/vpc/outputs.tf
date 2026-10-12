@@ -108,6 +108,11 @@ output "s3_gateway_endpoint_id" {
   value       = try(aws_vpc_endpoint.s3_gateway[0].id, null)
 }
 
+output "s3_gateway_endpoint_prefix_list_id" {
+  description = "Managed prefix list of the S3 gateway endpoint, for security-group egress rules that should reach S3 (ECR image layers, for example) without opening 0.0.0.0/0. Null when disabled."
+  value       = try(aws_vpc_endpoint.s3_gateway[0].prefix_list_id, null)
+}
+
 output "interface_endpoint_ids" {
   description = "Map of interface endpoint service short name -> endpoint ID."
   value       = { for k, ep in aws_vpc_endpoint.interface : k => ep.id }
