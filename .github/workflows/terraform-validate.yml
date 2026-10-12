@@ -13,6 +13,8 @@ on:
       - '.pre-commit-config.yaml'
       - 'Makefile'
       - '.github/workflows/terraform-validate.yml'
+      - 'policy/**'
+      - 'scripts/**'
   push:
     branches: [main]
     paths:
@@ -24,6 +26,8 @@ on:
       - '.pre-commit-config.yaml'
       - 'Makefile'
       - '.github/workflows/terraform-validate.yml'
+      - 'policy/**'
+      - 'scripts/**'
   workflow_dispatch:
 
 permissions:
@@ -258,6 +262,33 @@ jobs:
         env:
           SKIP: terraform_fmt,terraform_validate,terraform_docs,terraform_tflint,terraform_trivy
 
+  policy:
+    name: policy (conftest on example plans)
+    runs-on: ubuntu-latest
+    env:
+      CONFTEST_VERSION: "0.70.1"
+      MOTO_VERSION: "5.2.4"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: install conftest
+        run: |
+          set -euo pipefail
+          curl -sSL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin conftest
+      # Moto stands in for the AWS API during plan: the provider still calls it
+      # for credential checks and a few data sources. No AWS account is used.
+      - name: install moto
+        run: pipx install "moto[server]==${MOTO_VERSION}"
+      # Same targets developers run: policy unit tests first, then every
+      # example is planned and its plan JSON evaluated against policy/.
+      - run: make policy
+
   comment:
     name: PR validation summary
     if: github.event_name == 'pull_request' && always()
@@ -271,6 +302,7 @@ jobs:
       - trivy
       - docs
       - pre-commit
+      - policy
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -294,5 +326,6 @@ jobs:
             | trivy | ${{ needs.trivy.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.trivy.result }} |
             | terraform-docs drift | ${{ needs.docs.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.docs.result }} |
             | pre-commit | ${{ needs.pre-commit.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.pre-commit.result }} |
+            | policy (conftest) | ${{ needs.policy.result == 'success' && ':white_check_mark:' || ':x:' }} ${{ needs.policy.result }} |
 
             _Workflow run: ${{ github.run_id }}_

@@ -34,14 +34,19 @@ output "master_username" {
 }
 
 output "master_password" {
-  description = "Master password. Prefer reading from Secrets Manager instead of consuming this directly."
+  description = "Master password. Prefer reading from Secrets Manager instead of consuming this directly. Null when manage_master_password = true."
   value       = local.master_secret
   sensitive   = true
 }
 
 output "master_secret_arn" {
-  description = "ARN of the Secrets Manager secret holding the master credentials JSON."
-  value       = aws_secretsmanager_secret.master.arn
+  description = "ARN of the module-managed Secrets Manager secret holding the master credentials JSON. Null when manage_master_password = true; use master_user_secret_arn instead."
+  value       = one(aws_secretsmanager_secret.master[*].arn)
+}
+
+output "master_user_secret_arn" {
+  description = "ARN of the RDS-managed Secrets Manager secret holding the master credentials. Null unless manage_master_password = true."
+  value       = var.manage_master_password ? try(aws_db_instance.this.master_user_secret[0].secret_arn, null) : null
 }
 
 output "security_group_id" {
@@ -67,4 +72,9 @@ output "read_replica_endpoints" {
 output "read_replica_ids" {
   description = "Map of replica name -> RDS instance identifier."
   value       = { for k, r in aws_db_instance.replica : k => r.id }
+}
+
+output "cloudwatch_alarm_arns" {
+  description = "Map of alarm key (cpu-utilization, free-storage-space, freeable-memory, database-connections) -> CloudWatch alarm ARN. Empty unless create_cloudwatch_alarms = true."
+  value       = { for k, a in aws_cloudwatch_metric_alarm.this : k => a.arn }
 }

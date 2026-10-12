@@ -20,7 +20,7 @@ export TFLINT_CONFIG_FILE := $(ROOT)/.tflint.hcl
 AWS_PROVIDER_FLOOR ?= 6.0.0
 
 .DEFAULT_GOAL := help
-.PHONY: help fmt fmt-check validate validate-floor lint test docs docs-check security all clean
+.PHONY: help fmt fmt-check validate validate-floor lint test docs docs-check security policy-test policy all clean
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -105,9 +105,18 @@ security: ## Trivy misconfiguration scan, gating on HIGH/CRITICAL
 		--severity HIGH,CRITICAL \
 		--exit-code 1 \
 		--skip-dirs '**/.terraform' \
+		--skip-dirs .policy-plans \
 		--ignorefile .trivyignore.yaml
 
-all: fmt-check validate validate-floor lint test docs-check security ## Everything CI runs
+policy-test: ## Unit-test the Conftest policies
+	conftest fmt --check policy
+	conftest verify --policy policy
 
-clean: ## Remove local .terraform directories
+policy: policy-test ## Plan every example against Moto and enforce policy/ on the plan JSON
+	scripts/policy-check.sh
+
+all: fmt-check validate validate-floor lint test docs-check security policy ## Everything CI runs
+
+clean: ## Remove local .terraform directories and generated plans
 	find modules examples -type d -name .terraform -prune -exec rm -rf {} +
+	rm -rf .policy-plans

@@ -33,6 +33,31 @@ output "private_subnet_cidrs" {
   value       = aws_subnet.private[*].cidr_block
 }
 
+output "database_subnet_ids" {
+  description = "List of database subnet IDs, ordered to match `availability_zones`. Empty when `enable_database_subnets = false`."
+  value       = aws_subnet.database[*].id
+}
+
+output "database_subnet_cidrs" {
+  description = "CIDR blocks of the database subnets. Empty when `enable_database_subnets = false`."
+  value       = aws_subnet.database[*].cidr_block
+}
+
+output "database_subnet_group_name" {
+  description = "Name of the RDS DB subnet group spanning the database subnets, or null when not created."
+  value       = try(aws_db_subnet_group.database[0].name, null)
+}
+
+output "database_route_table_ids" {
+  description = "List of database route table IDs (one per AZ). Empty when `enable_database_subnets = false`."
+  value       = aws_route_table.database[*].id
+}
+
+output "default_security_group_id" {
+  description = "ID of the VPC's default security group (rules stripped when `manage_default_security_group = true`)."
+  value       = aws_vpc.this.default_security_group_id
+}
+
 output "internet_gateway_id" {
   description = "ID of the Internet Gateway."
   value       = aws_internet_gateway.this.id
@@ -61,6 +86,16 @@ output "private_route_table_ids" {
 output "flow_logs_bucket_arn" {
   description = "ARN of the S3 bucket receiving VPC flow logs. Null when flow logs are disabled or a pre-existing bucket was passed in."
   value       = length(aws_s3_bucket.flow_logs) > 0 ? aws_s3_bucket.flow_logs[0].arn : null
+}
+
+output "flow_logs_cloudwatch_log_group_arn" {
+  description = "ARN of the CloudWatch Logs group receiving VPC flow logs. Null unless `flow_logs_destination_type = \"cloud-watch-logs\"`."
+  value       = try(aws_cloudwatch_log_group.flow_logs[0].arn, null)
+}
+
+output "flow_logs_cloudwatch_iam_role_arn" {
+  description = "ARN of the IAM role VPC Flow Logs assumes to write to CloudWatch Logs. Null unless `flow_logs_destination_type = \"cloud-watch-logs\"`."
+  value       = try(aws_iam_role.flow_logs_cloudwatch[0].arn, null)
 }
 
 output "availability_zones" {

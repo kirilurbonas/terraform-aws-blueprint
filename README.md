@@ -174,6 +174,12 @@ hardcodes a region or account ID.
 │   ├── eks-cluster/         # VPC + EKS
 │   ├── full-stack/          # VPC + EKS + RDS + S3 + KMS + IRSA
 │   └── prod-overrides/      # override.tf pattern for prevent_destroy
+├── policy/                  # Conftest rules evaluated on example plan JSON
+├── scripts/
+│   └── policy-check.sh      # plan examples against Moto, run conftest
+├── docs/
+│   ├── adr/                 # architecture decision records
+│   └── upgrading.md         # opt-in flags and the 1.0 default flips
 ├── .github/
 │   ├── workflows/terraform-validate.yml
 │   ├── workflows/release-drafter.yml
@@ -198,7 +204,8 @@ hardcodes a region or account ID.
 
 ## Local development
 
-You need `terraform`, `tflint`, `terraform-docs`, and `trivy` on `PATH`.
+You need `terraform`, `tflint`, `terraform-docs`, and `trivy` on `PATH`, plus
+`conftest` and Moto (`pipx install 'moto[server]'`) for `make policy`.
 Install the [pre-commit](https://pre-commit.com/) hooks once:
 
 ```bash
@@ -220,6 +227,7 @@ make lint            # tflint, shared rule set from .tflint.hcl
 make test            # plan-only module tests against mock_provider
 make docs-check      # fail if terraform-docs output is stale
 make security        # trivy, gating on HIGH/CRITICAL
+make policy          # plan every example, enforce policy/ on the plan JSON
 make all             # all of the above
 ```
 
@@ -237,6 +245,24 @@ Every Trivy finding is uploaded to GitHub code scanning; HIGH and CRITICAL gate
 the build. Suppressions live in [`.trivyignore.yaml`](.trivyignore.yaml), each
 with a written justification — and anything that is a real gap rather than a
 deliberate choice carries an expiry date so it cannot be forgotten.
+
+## Verification
+
+Every pull request has to clear the same gates, and `make all` runs them
+locally:
+
+| Gate | What it proves |
+|------|----------------|
+| `terraform test` | Each module plans what it claims for every documented input combination, and every `validation` block rejects what it should. Plan-only against `mock_provider` — see [ADR 0002](docs/adr/0002-plan-only-tests.md). |
+| Provider-floor validate | Every module still validates against the oldest AWS provider its constraint admits. |
+| Policy (Conftest) | Each example is planned for real — against [Moto](https://github.com/getmoto/moto), no AWS account — and the plan JSON must satisfy [`policy/`](policy/): no admin ports open to the internet, encryption at rest everywhere, IMDSv2, TLS 1.3 on ALBs, no `Action: "*"`, no unscoped web-identity trust, the tagging contract. See [ADR 0003](docs/adr/0003-policy-on-plan-json.md). |
+| Trivy | Static misconfiguration scan; HIGH/CRITICAL gate the build, every finding goes to code scanning. |
+| tflint | Terraform + AWS rulesets at `preset = "all"`. |
+| terraform-docs drift | Every README's inputs/outputs table matches the code. |
+
+Design decisions behind the library live in [`docs/adr/`](docs/adr/).
+Upgrade notes and the list of defaults that change at `v1.0.0` are in
+[`docs/upgrading.md`](docs/upgrading.md).
 
 ## Roadmap
 

@@ -8,7 +8,8 @@ master credentials stored in AWS Secrets Manager.
 - PostgreSQL and MySQL support; engine-aware port and parameter-group family
 - Multi-AZ by default
 - Storage encrypted with AES-256 (KMS) by default; optional customer-managed key
-- Random master password (32 chars), persisted to Secrets Manager
+- Random master password (32 chars), persisted to Secrets Manager; or, opt-in,
+  an RDS-managed password that never enters Terraform state
 - Backups with configurable retention (default 7 days) and dedicated backup window
 - Performance Insights and Enhanced Monitoring on by default
 - Explicit CloudWatch log groups for exported DB logs, with configurable
@@ -18,6 +19,10 @@ master credentials stored in AWS Secrets Manager.
   snapshot and keep their secret in the recovery window
 - Ingress restricted to caller-provided CIDR blocks and/or security group IDs;
   no public accessibility
+- Optional IAM database authentication, CA certificate pinning, and Blue/Green
+  updates
+- Optional CloudWatch alarms for CPU, free storage, freeable memory, and
+  connection count
 
 ## Usage
 
@@ -37,7 +42,7 @@ module "rds" {
 
   vpc_id                     = module.vpc.vpc_id
   subnet_ids                 = module.vpc.private_subnet_ids
-  allowed_security_group_ids = [module.eks.node_security_group_id]
+  allowed_security_groups    = { eks_nodes = module.eks.node_security_group_id }
 
   allocated_storage_gb     = 200
   max_allocated_storage_gb = 1000
@@ -47,6 +52,90 @@ module "rds" {
 
 Consume the password from the application via Secrets Manager (preferred) using
 the secret ARN exposed at `module.rds.master_secret_arn`.
+
+### Security group ingress with computed IDs
+
+`allowed_security_group_ids` is a list used as a `for_each` set, so every ID in
+it must be known at plan time. When an ID is created in the same apply (for
+example `module.eks.node_security_group_id` on a first deploy), plan fails with
+`Invalid for_each argument`. Use the map form instead; its keys are static
+labels you choose, and only the values are computed:
+
+```hcl
+module "rds" {
+  # ...
+  allowed_security_groups = {
+    eks_nodes = module.eks.node_security_group_id
+  }
+}
+```
+
+Both inputs can be used together. Existing list entries keep their resource
+addresses, so moving an ID from the list to the map replaces that one ingress
+rule.
+
+### RDS-managed master password
+
+By default the module generates the master password with `random_password` and
+writes it to a module-managed Secrets Manager secret. Both put the plaintext
+password in Terraform state. Setting `manage_master_password = true` switches to
+RDS-native `manage_master_user_password`: RDS generates the password, stores it
+in a secret it owns, and rotates it. Nothing sensitive reaches state.
+
+```hcl
+module "rds" {
+  # ...
+  manage_master_password = true
+
+  # Optional. Falls back to kms_key_arn, then to aws/secretsmanager.
+  master_user_secret_kms_key_id = aws_kms_key.secrets.arn
+}
+```
+
+In managed mode:
+
+- `random_password`, `aws_secretsmanager_secret`, and
+  `aws_secretsmanager_secret_version` are not created.
+- `master_user_secret_arn` holds the RDS-managed secret ARN. `master_password`
+  and `master_secret_arn` return `null`.
+- The RDS-managed secret contains only `username` and `password`. Read host,
+  port, and database name from the module outputs.
+- Read replicas are unaffected; they inherit credentials from the primary.
+
+Switching an existing instance to managed mode is an in-place modification. The
+module-managed secret and generated password are destroyed, so move consumers
+to `master_user_secret_arn` first. The default flips to `true` at `v1.0.0`.
+
+### CloudWatch alarms
+
+`create_cloudwatch_alarms = true` creates four alarms on the primary instance,
+named `<name_prefix>-<environment>-<engine>-<metric>`:
+
+| Key | Metric | Fires when | Default |
+|-----|--------|------------|---------|
+| `cpu-utilization` | `CPUUtilization` | above | 80 % |
+| `free-storage-space` | `FreeStorageSpace` | below | 10 GiB |
+| `freeable-memory` | `FreeableMemory` | below | 256 MiB |
+| `database-connections` | `DatabaseConnections` | above | 100 |
+
+Each alarm averages over `period_seconds` (default 300) for `evaluation_periods`
+(default 3). Override any subset through `cloudwatch_alarm_thresholds`; size
+`database_connections` to the instance class's `max_connections`.
+
+```hcl
+module "rds" {
+  # ...
+  create_cloudwatch_alarms = true
+  cloudwatch_alarm_thresholds = {
+    cpu_utilization_percent = 90
+    database_connections    = 400
+  }
+  alarm_actions = [aws_sns_topic.oncall.arn]
+  ok_actions    = [aws_sns_topic.oncall.arn]
+}
+```
+
+Alarm ARNs are exposed at `module.rds.cloudwatch_alarm_arns`.
 
 ## Inputs
 
@@ -68,21 +157,33 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | `db_name` | `string` | — | yes | Initial database name. |
 | `master_username` | `string` | `"dbadmin"` | no | Master user. |
 | `port` | `number` | engine default | no | Listener port. |
+| `manage_master_password` | `bool` | `false` | no | Use the RDS-managed master password instead of `random_password` + module-managed secret. |
+| `master_user_secret_kms_key_id` | `string` | `null` | no | KMS key for the RDS-managed secret; falls back to `kms_key_arn`. |
+| `iam_database_authentication_enabled` | `bool` | `false` | no | IAM DB auth on primary and replicas. |
 | `vpc_id` | `string` | — | yes | VPC for the SG. |
 | `subnet_ids` | `list(string)` | — | yes | Private subnets (≥ 2 AZs). |
 | `allowed_cidr_blocks` | `list(string)` | `[]` | no | CIDR ingress. |
-| `allowed_security_group_ids` | `list(string)` | `[]` | no | SG ingress. |
+| `allowed_security_group_ids` | `list(string)` | `[]` | no | SG ingress. IDs must be known at plan time. |
+| `allowed_security_groups` | `map(string)` | `{}` | no | SG ingress as label → SG ID. Required when IDs are computed in the same apply. |
 | `multi_az` | `bool` | `true` | no | Multi-AZ deployment. |
 | `backup_retention_days` | `number` | `7` | no | Days of automated backups. |
 | `backup_window` | `string` | `"03:00-04:00"` | no | UTC. |
 | `maintenance_window` | `string` | `"Sun:04:30-Sun:05:30"` | no | UTC. |
 | `deletion_protection` | `bool` | `true` | no | Block destroy via AWS API. |
 | `auto_minor_version_upgrade` | `bool` | `true` | no | Auto-apply minor upgrades. |
+| `apply_immediately` | `bool` | `null` | no | Override when changes apply; `null` = immediately outside prod, maintenance window in prod. |
+| `copy_tags_to_snapshot` | `bool` | `true` | no | Copy instance tags to snapshots. |
+| `blue_green_update` | `bool` | `false` | no | Apply engine upgrades and supported modifications via an RDS Blue/Green deployment. |
+| `ca_cert_identifier` | `string` | `null` | no | Server certificate CA (e.g. `rds-ca-rsa2048-g1`). |
 | `performance_insights_enabled` | `bool` | `true` | no | Performance Insights. |
 | `performance_insights_retention_days` | `number` | `7` | no | PI retention. |
 | `monitoring_interval` | `number` | `60` | no | Enhanced Monitoring seconds. |
 | `cloudwatch_log_retention_days` | `number` | `90` | no | Retention for exported DB log groups. |
 | `cloudwatch_log_kms_key_arn` | `string` | `null` | no | Optional KMS key for exported DB log groups. |
+| `create_cloudwatch_alarms` | `bool` | `false` | no | Create CPU / storage / memory / connection alarms. |
+| `cloudwatch_alarm_thresholds` | `object` | see above | no | Alarm thresholds and evaluation window. |
+| `alarm_actions` | `list(string)` | `[]` | no | SNS topic ARNs for ALARM transitions. |
+| `ok_actions` | `list(string)` | `[]` | no | SNS topic ARNs for OK transitions. |
 | `read_replicas` | `map(object)` | `{}` | no | Read replicas keyed by short name; each takes optional `instance_class` and `multi_az`. |
 | `tags` | `map(string)` | `{}` | no | Extra tags. |
 
@@ -97,13 +198,15 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | `port` | Listener port. |
 | `db_name` | Initial database name. |
 | `master_username` | Master username. |
-| `master_password` | Master password (sensitive). |
-| `master_secret_arn` | Secrets Manager secret ARN. |
+| `master_password` | Master password (sensitive). `null` in managed mode. |
+| `master_secret_arn` | Module-managed Secrets Manager secret ARN. `null` in managed mode. |
+| `master_user_secret_arn` | RDS-managed secret ARN. `null` unless `manage_master_password = true`. |
 | `security_group_id` | DB security group ID. |
 | `db_subnet_group_name` | Subnet group name. |
 | `parameter_group_name` | Parameter group name. |
 | `read_replica_endpoints` | Map of replica name → connection endpoint. |
 | `read_replica_ids` | Map of replica name → RDS instance identifier. |
+| `cloudwatch_alarm_arns` | Map of alarm key → alarm ARN. |
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -128,6 +231,7 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | Name | Type |
 | ---- | ---- |
 | [aws_cloudwatch_log_group.exports](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
+| [aws_cloudwatch_metric_alarm.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_db_instance.replica](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance) | resource |
 | [aws_db_instance.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance) | resource |
 | [aws_db_parameter_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_parameter_group) | resource |
@@ -139,6 +243,7 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | [aws_security_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
 | [aws_vpc_security_group_ingress_rule.from_cidr](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
 | [aws_vpc_security_group_ingress_rule.from_sg](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
+| [aws_vpc_security_group_ingress_rule.from_sg_map](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
 | [random_password.master](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
 | [aws_iam_policy_document.monitoring_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 
@@ -155,22 +260,34 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | <a name="input_project"></a> [project](#input\_project) | Project tag applied to every resource. | `string` | n/a | yes |
 | <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | Subnet IDs for the DB subnet group. Should be private. | `list(string)` | n/a | yes |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC where the DB security group is created. | `string` | n/a | yes |
+| <a name="input_alarm_actions"></a> [alarm\_actions](#input\_alarm\_actions) | SNS topic ARNs notified when an alarm enters the ALARM state. | `list(string)` | `[]` | no |
 | <a name="input_allocated_storage_gb"></a> [allocated\_storage\_gb](#input\_allocated\_storage\_gb) | Initial allocated storage in GiB. | `number` | `100` | no |
 | <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to reach the DB port. | `list(string)` | `[]` | no |
-| <a name="input_allowed_security_group_ids"></a> [allowed\_security\_group\_ids](#input\_allowed\_security\_group\_ids) | Security group IDs allowed to reach the DB port. | `list(string)` | `[]` | no |
+| <a name="input_allowed_security_group_ids"></a> [allowed\_security\_group\_ids](#input\_allowed\_security\_group\_ids) | Security group IDs allowed to reach the DB port. Every ID must be known at plan time; use allowed\_security\_groups for IDs created in the same apply. | `list(string)` | `[]` | no |
+| <a name="input_allowed_security_groups"></a> [allowed\_security\_groups](#input\_allowed\_security\_groups) | Security groups allowed to reach the DB port, as a map of static caller-chosen label -> SG ID. Required instead of allowed\_security\_group\_ids whenever an ID is computed in the same apply (e.g. module.eks.node\_security\_group\_id). Labels must be known at plan time; values need not be. | `map(string)` | `{}` | no |
+| <a name="input_apply_immediately"></a> [apply\_immediately](#input\_apply\_immediately) | Apply modifications immediately instead of in the next maintenance window. Null keeps the module's environment-based behaviour: immediately outside prod, maintenance window in prod. | `bool` | `null` | no |
 | <a name="input_auto_minor_version_upgrade"></a> [auto\_minor\_version\_upgrade](#input\_auto\_minor\_version\_upgrade) | Allow RDS to apply minor engine upgrades automatically during the maintenance window. | `bool` | `true` | no |
 | <a name="input_backup_retention_days"></a> [backup\_retention\_days](#input\_backup\_retention\_days) | Days to keep automated backups. | `number` | `7` | no |
 | <a name="input_backup_window"></a> [backup\_window](#input\_backup\_window) | Preferred backup window in UTC (e.g. "03:00-04:00"). | `string` | `"03:00-04:00"` | no |
+| <a name="input_blue_green_update"></a> [blue\_green\_update](#input\_blue\_green\_update) | Route changes that would otherwise modify the primary in place (e.g. engine upgrades) through an RDS Blue/Green deployment. | `bool` | `false` | no |
+| <a name="input_ca_cert_identifier"></a> [ca\_cert\_identifier](#input\_ca\_cert\_identifier) | Certificate authority for the server certificate (e.g. rds-ca-rsa2048-g1, rds-ca-rsa4096-g1, rds-ca-ecc384-g1). Applied to the primary and replicas. Null leaves the RDS regional default. | `string` | `null` | no |
+| <a name="input_cloudwatch_alarm_thresholds"></a> [cloudwatch\_alarm\_thresholds](#input\_cloudwatch\_alarm\_thresholds) | Thresholds and evaluation window for the alarms created by create\_cloudwatch\_alarms. Omitted attributes take their defaults. database\_connections should be sized to the instance class's max\_connections. | <pre>object({<br/>    cpu_utilization_percent = optional(number, 80)<br/>    free_storage_space_gb   = optional(number, 10)<br/>    freeable_memory_mb      = optional(number, 256)<br/>    database_connections    = optional(number, 100)<br/>    period_seconds          = optional(number, 300)<br/>    evaluation_periods      = optional(number, 3)<br/>  })</pre> | `{}` | no |
 | <a name="input_cloudwatch_log_kms_key_arn"></a> [cloudwatch\_log\_kms\_key\_arn](#input\_cloudwatch\_log\_kms\_key\_arn) | Optional KMS key ARN for encrypting the CloudWatch log groups that receive exported DB logs. | `string` | `null` | no |
 | <a name="input_cloudwatch_log_retention_days"></a> [cloudwatch\_log\_retention\_days](#input\_cloudwatch\_log\_retention\_days) | Retention in days for the CloudWatch log groups that receive exported DB logs. | `number` | `90` | no |
+| <a name="input_copy_tags_to_snapshot"></a> [copy\_tags\_to\_snapshot](#input\_copy\_tags\_to\_snapshot) | Copy instance tags to snapshots of the primary instance. | `bool` | `true` | no |
+| <a name="input_create_cloudwatch_alarms"></a> [create\_cloudwatch\_alarms](#input\_create\_cloudwatch\_alarms) | Create CloudWatch metric alarms on the primary instance for CPUUtilization, FreeStorageSpace, FreeableMemory, and DatabaseConnections. | `bool` | `false` | no |
 | <a name="input_deletion_protection"></a> [deletion\_protection](#input\_deletion\_protection) | Block the instance from being deleted without first removing this flag. | `bool` | `true` | no |
 | <a name="input_extra_parameters"></a> [extra\_parameters](#input\_extra\_parameters) | Additional DB parameters merged on top of the engine defaults. | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
+| <a name="input_iam_database_authentication_enabled"></a> [iam\_database\_authentication\_enabled](#input\_iam\_database\_authentication\_enabled) | Enable IAM database authentication on the primary and its read replicas. | `bool` | `false` | no |
 | <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | Customer-managed KMS key for storage / Performance Insights / Secrets Manager. Null = AWS-managed key. | `string` | `null` | no |
 | <a name="input_maintenance_window"></a> [maintenance\_window](#input\_maintenance\_window) | Preferred maintenance window in UTC (e.g. "Sun:04:30-Sun:05:30"). | `string` | `"Sun:04:30-Sun:05:30"` | no |
+| <a name="input_manage_master_password"></a> [manage\_master\_password](#input\_manage\_master\_password) | Let RDS generate and rotate the master password in an RDS-managed Secrets Manager secret (manage\_master\_user\_password). When true, no random\_password or module-managed secret is created, the password never enters Terraform state, master\_password / master\_secret\_arn return null, and the secret ARN is exposed as master\_user\_secret\_arn. | `bool` | `false` | no |
+| <a name="input_master_user_secret_kms_key_id"></a> [master\_user\_secret\_kms\_key\_id](#input\_master\_user\_secret\_kms\_key\_id) | KMS key (ARN, key ID, or alias) for the RDS-managed master user secret. Only used when manage\_master\_password = true. Falls back to kms\_key\_arn, then to the AWS-managed aws/secretsmanager key. | `string` | `null` | no |
 | <a name="input_master_username"></a> [master\_username](#input\_master\_username) | Master DB username. | `string` | `"dbadmin"` | no |
 | <a name="input_max_allocated_storage_gb"></a> [max\_allocated\_storage\_gb](#input\_max\_allocated\_storage\_gb) | Upper bound for storage autoscaling. Set equal to allocated\_storage\_gb to disable. | `number` | `500` | no |
 | <a name="input_monitoring_interval"></a> [monitoring\_interval](#input\_monitoring\_interval) | Enhanced Monitoring interval in seconds. 0 disables. Valid: 0, 1, 5, 10, 15, 30, 60. | `number` | `60` | no |
 | <a name="input_multi_az"></a> [multi\_az](#input\_multi\_az) | Deploy a synchronous standby in another AZ. | `bool` | `true` | no |
+| <a name="input_ok_actions"></a> [ok\_actions](#input\_ok\_actions) | SNS topic ARNs notified when an alarm returns to the OK state. | `list(string)` | `[]` | no |
 | <a name="input_parameter_group_family"></a> [parameter\_group\_family](#input\_parameter\_group\_family) | Parameter group family (e.g. postgres16, mysql8.0). Derived from engine/version when null. | `string` | `null` | no |
 | <a name="input_performance_insights_enabled"></a> [performance\_insights\_enabled](#input\_performance\_insights\_enabled) | Enable Performance Insights. | `bool` | `true` | no |
 | <a name="input_performance_insights_retention_days"></a> [performance\_insights\_retention\_days](#input\_performance\_insights\_retention\_days) | Performance Insights retention in days. 7 is free; 31, 93, 186, 372, 731 require long-term retention pricing. | `number` | `7` | no |
@@ -185,13 +302,15 @@ the secret ARN exposed at `module.rds.master_secret_arn`.
 | Name | Description |
 | ---- | ----------- |
 | <a name="output_address"></a> [address](#output\_address) | Hostname of the RDS instance. |
+| <a name="output_cloudwatch_alarm_arns"></a> [cloudwatch\_alarm\_arns](#output\_cloudwatch\_alarm\_arns) | Map of alarm key (cpu-utilization, free-storage-space, freeable-memory, database-connections) -> CloudWatch alarm ARN. Empty unless create\_cloudwatch\_alarms = true. |
 | <a name="output_db_instance_arn"></a> [db\_instance\_arn](#output\_db\_instance\_arn) | RDS instance ARN. |
 | <a name="output_db_instance_id"></a> [db\_instance\_id](#output\_db\_instance\_id) | RDS instance identifier. |
 | <a name="output_db_name"></a> [db\_name](#output\_db\_name) | Initial database name. |
 | <a name="output_db_subnet_group_name"></a> [db\_subnet\_group\_name](#output\_db\_subnet\_group\_name) | Name of the DB subnet group. |
 | <a name="output_endpoint"></a> [endpoint](#output\_endpoint) | Connection endpoint (host:port). |
-| <a name="output_master_password"></a> [master\_password](#output\_master\_password) | Master password. Prefer reading from Secrets Manager instead of consuming this directly. |
-| <a name="output_master_secret_arn"></a> [master\_secret\_arn](#output\_master\_secret\_arn) | ARN of the Secrets Manager secret holding the master credentials JSON. |
+| <a name="output_master_password"></a> [master\_password](#output\_master\_password) | Master password. Prefer reading from Secrets Manager instead of consuming this directly. Null when manage\_master\_password = true. |
+| <a name="output_master_secret_arn"></a> [master\_secret\_arn](#output\_master\_secret\_arn) | ARN of the module-managed Secrets Manager secret holding the master credentials JSON. Null when manage\_master\_password = true; use master\_user\_secret\_arn instead. |
+| <a name="output_master_user_secret_arn"></a> [master\_user\_secret\_arn](#output\_master\_user\_secret\_arn) | ARN of the RDS-managed Secrets Manager secret holding the master credentials. Null unless manage\_master\_password = true. |
 | <a name="output_master_username"></a> [master\_username](#output\_master\_username) | Master username. |
 | <a name="output_parameter_group_name"></a> [parameter\_group\_name](#output\_parameter\_group\_name) | Name of the parameter group. |
 | <a name="output_port"></a> [port](#output\_port) | Port the database is listening on. |

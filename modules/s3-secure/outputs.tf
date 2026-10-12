@@ -22,3 +22,8 @@ output "bucket_hosted_zone_id" {
   description = "Route53 hosted zone ID for the bucket's region (handy when fronting with CloudFront)."
   value       = aws_s3_bucket.this.hosted_zone_id
 }
+
+output "replication_role_arn" {
+  description = "IAM role S3 uses for replication — the module-created role, or replication.role_arn when supplied. Null when replication is disabled."
+  value       = local.replication_role_arn
+}

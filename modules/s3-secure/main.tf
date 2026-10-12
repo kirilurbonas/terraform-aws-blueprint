@@ -26,6 +26,11 @@ locals {
 
   use_kms       = var.sse_algorithm == "aws:kms"
   use_name_only = var.bucket_name != null
+
+  # Replication: the module creates a role only when the caller did not supply one.
+  enable_replication      = var.replication != null
+  create_replication_role = local.enable_replication && try(var.replication.role_arn, null) == null
+  replication_role_arn    = local.enable_replication ? coalesce(try(var.replication.role_arn, null), try(aws_iam_role.replication[0].arn, null)) : null
 }
 
 ###############################################################################
@@ -325,4 +330,246 @@ resource "aws_s3_bucket_policy" "this" {
   policy = data.aws_iam_policy_document.bucket.json
 
   depends_on = [aws_s3_bucket_public_access_block.this]
+}
+
+###############################################################################
+# Object Lock (optional)
+#
+# Enabled through the configuration resource rather than the bucket's
+# `object_lock_enabled` argument: that argument forces replacement of an
+# existing bucket, while PutObjectLockConfiguration can enable Object Lock in
+# place on any versioned bucket. Object Lock cannot be disabled once enabled.
+###############################################################################
+
+resource "aws_s3_bucket_object_lock_configuration" "this" {
+  count = var.object_lock != null ? 1 : 0
+
+  bucket              = aws_s3_bucket.this.id
+  object_lock_enabled = "Enabled"
+
+  rule {
+    default_retention {
+      mode  = var.object_lock.mode
+      days  = var.object_lock.days
+      years = var.object_lock.years
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.this]
+}
+
+###############################################################################
+# Replication (optional)
+###############################################################################
+
+data "aws_region" "current" {
+  count = local.enable_replication ? 1 : 0
+}
+
+data "aws_iam_policy_document" "replication_assume" {
+  count = local.create_replication_role ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "replication" {
+  count = local.create_replication_role ? 1 : 0
+
+  statement {
+    sid       = "SourceBucketConfig"
+    actions   = ["s3:GetReplicationConfiguration", "s3:ListBucket"]
+    resources = [aws_s3_bucket.this.arn]
+  }
+
+  statement {
+    sid = "SourceObjectRead"
+    actions = concat(
+      [
+        "s3:GetObjectVersionForReplication",
+        "s3:GetObjectVersionAcl",
+        "s3:GetObjectVersionTagging",
+      ],
+      # Retention and legal-hold metadata travel with locked objects.
+      var.object_lock != null ? ["s3:GetObjectRetention", "s3:GetObjectLegalHold"] : [],
+    )
+    resources = ["${aws_s3_bucket.this.arn}/*"]
+  }
+
+  statement {
+    sid       = "DestinationObjectWrite"
+    actions   = ["s3:ReplicateObject", "s3:ReplicateDelete", "s3:ReplicateTags"]
+    resources = ["${var.replication.destination_bucket_arn}/*"]
+  }
+
+  # Encryption context is the bucket ARN with S3 Bucket Keys, the object ARN
+  # without — allow both so the policy holds either way.
+  dynamic "statement" {
+    for_each = local.use_kms ? [1] : []
+    content {
+      sid       = "SourceKmsDecrypt"
+      actions   = ["kms:Decrypt"]
+      resources = [var.kms_key_arn]
+
+      condition {
+        test     = "StringEquals"
+        variable = "kms:ViaService"
+        values   = ["s3.${data.aws_region.current[0].region}.amazonaws.com"]
+      }
+
+      condition {
+        test     = "StringLike"
+        variable = "kms:EncryptionContext:aws:s3:arn"
+        values   = [aws_s3_bucket.this.arn, "${aws_s3_bucket.this.arn}/*"]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.replication.destination_kms_key_arn != null ? [1] : []
+    content {
+      sid       = "DestinationKmsEncrypt"
+      actions   = ["kms:Encrypt", "kms:GenerateDataKey"]
+      resources = [var.replication.destination_kms_key_arn]
+
+      condition {
+        test     = "StringEquals"
+        variable = "kms:ViaService"
+        values   = ["s3.${split(":", var.replication.destination_kms_key_arn)[3]}.amazonaws.com"]
+      }
+
+      condition {
+        test     = "StringLike"
+        variable = "kms:EncryptionContext:aws:s3:arn"
+        values   = [var.replication.destination_bucket_arn, "${var.replication.destination_bucket_arn}/*"]
+      }
+    }
+  }
+}
+
+resource "aws_iam_role" "replication" {
+  count = local.create_replication_role ? 1 : 0
+
+  name_prefix        = "s3-replication-"
+  assume_role_policy = data.aws_iam_policy_document.replication_assume[0].json
+  description        = "S3 replication role for ${aws_s3_bucket.this.id}"
+
+  tags = merge(local.common_tags, {
+    Name = "${aws_s3_bucket.this.id}-replication"
+  })
+}
+
+resource "aws_iam_role_policy" "replication" {
+  count = local.create_replication_role ? 1 : 0
+
+  name_prefix = "s3-replication-"
+  role        = aws_iam_role.replication[0].id
+  policy      = data.aws_iam_policy_document.replication[0].json
+}
+
+resource "aws_s3_bucket_replication_configuration" "this" {
+  count = local.enable_replication ? 1 : 0
+
+  bucket = aws_s3_bucket.this.id
+  role   = local.replication_role_arn
+
+  rule {
+    id     = "replicate-all"
+    status = "Enabled"
+
+    # An empty filter selects the V2 rule schema, which is what makes
+    # delete_marker_replication configurable.
+    filter {}
+
+    delete_marker_replication {
+      status = var.replication.delete_marker_replication ? "Enabled" : "Disabled"
+    }
+
+    # SSE-KMS objects are skipped by replication unless opted in explicitly.
+    dynamic "source_selection_criteria" {
+      for_each = local.use_kms ? [1] : []
+      content {
+        sse_kms_encrypted_objects {
+          status = "Enabled"
+        }
+      }
+    }
+
+    destination {
+      bucket        = var.replication.destination_bucket_arn
+      storage_class = var.replication.storage_class
+
+      dynamic "encryption_configuration" {
+        for_each = var.replication.destination_kms_key_arn != null ? [var.replication.destination_kms_key_arn] : []
+        content {
+          replica_kms_key_id = encryption_configuration.value
+        }
+      }
+    }
+  }
+
+  # Replication requires versioning to be enabled first, and the role's
+  # permissions to exist before S3 validates them.
+  depends_on = [aws_s3_bucket_versioning.this, aws_iam_role_policy.replication]
+}
+
+###############################################################################
+# EventBridge notifications (optional)
+#
+# aws_s3_bucket_notification owns the bucket's entire notification
+# configuration. Do not enable this and also manage SNS / SQS / Lambda
+# notifications for the same bucket elsewhere — the two will overwrite each
+# other.
+###############################################################################
+
+resource "aws_s3_bucket_notification" "this" {
+  count = var.enable_eventbridge_notifications ? 1 : 0
+
+  bucket      = aws_s3_bucket.this.id
+  eventbridge = true
+}
+
+###############################################################################
+# Intelligent-Tiering archive configurations (optional)
+#
+# These only act on objects already in the INTELLIGENT_TIERING storage class;
+# they add the opt-in Archive / Deep Archive access tiers on top of it.
+###############################################################################
+
+resource "aws_s3_bucket_intelligent_tiering_configuration" "this" {
+  for_each = var.intelligent_tiering
+
+  bucket = aws_s3_bucket.this.id
+  name   = each.key
+  status = each.value.enabled ? "Enabled" : "Disabled"
+
+  dynamic "filter" {
+    for_each = each.value.prefix != null || each.value.tags != null ? [1] : []
+    content {
+      prefix = each.value.prefix
+      tags   = each.value.tags
+    }
+  }
+
+  dynamic "tiering" {
+    for_each = each.value.archive_access_days != null ? [each.value.archive_access_days] : []
+    content {
+      access_tier = "ARCHIVE_ACCESS"
+      days        = tiering.value
+    }
+  }
+
+  dynamic "tiering" {
+    for_each = each.value.deep_archive_access_days != null ? [each.value.deep_archive_access_days] : []
+    content {
+      access_tier = "DEEP_ARCHIVE_ACCESS"
+      days        = tiering.value
+    }
+  }
 }

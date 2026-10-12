@@ -42,20 +42,3 @@ misconfigurations:
     paths:
       - "modules/vpc/main.tf"
     statement: *publicip
-
-  # --- Flow-log bucket without a CMK: a real gap, so this one expires --------
-  - id: AVD-AWS-0132
-    paths:
-      - "modules/vpc/main.tf"
-    expired_at: 2027-02-01
-    statement: &flowlogkms >-
-      The module-managed VPC flow-log bucket encrypts with SSE-S3 (AES256) and
-      does not yet accept a customer-managed key. This is a real hardening gap
-      rather than an intentional choice, tracked for v0.4.0 in ROADMAP.md
-      (vpc: accept `flow_logs_kms_key_arn`). Suppressed with an expiry so the
-      finding returns if the work slips.
-  - id: AWS-0132
-    paths:
-      - "modules/vpc/main.tf"
-    expired_at: 2027-02-01
-    statement: *flowlogkms

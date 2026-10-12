@@ -34,8 +34,21 @@ locals {
   port           = var.port != null ? var.port : (local.is_postgres ? 5432 : 3306)
   family         = var.parameter_group_family != null ? var.parameter_group_family : (local.is_postgres ? "postgres${split(".", var.engine_version)[0]}" : "mysql${join(".", slice(split(".", var.engine_version), 0, 2))}")
   is_prod        = var.environment == "prod"
-  master_secret  = random_password.master.result
   db_log_exports = local.is_postgres ? ["postgresql", "upgrade"] : ["audit", "error", "general", "slowquery"]
+
+  # In managed mode RDS generates and rotates the password in its own Secrets
+  # Manager secret, so the module never sees (or stores) the plaintext.
+  master_secret = var.manage_master_password ? null : random_password.master[0].result
+
+  # The RDS-managed secret falls back to the module-wide CMK when no dedicated
+  # key is given; both null means the AWS-managed aws/secretsmanager key.
+  master_user_secret_kms_key_id = var.manage_master_password ? (
+    var.master_user_secret_kms_key_id != null ? var.master_user_secret_kms_key_id : var.kms_key_arn
+  ) : null
+
+  # Null keeps the historical behaviour: apply immediately outside prod, defer
+  # to the maintenance window in prod.
+  apply_immediately = var.apply_immediately != null ? var.apply_immediately : !local.is_prod
 
   default_params = local.is_postgres ? [
     { name = "log_min_duration_statement", value = "1000" },
@@ -73,9 +86,29 @@ locals {
 
 ###############################################################################
 # Master password (stored in Secrets Manager)
+#
+# Only created when manage_master_password = false. The moved blocks keep
+# existing state addresses stable now that these resources carry a count.
 ###############################################################################
 
+moved {
+  from = random_password.master
+  to   = random_password.master[0]
+}
+
+moved {
+  from = aws_secretsmanager_secret.master
+  to   = aws_secretsmanager_secret.master[0]
+}
+
+moved {
+  from = aws_secretsmanager_secret_version.master
+  to   = aws_secretsmanager_secret_version.master[0]
+}
+
 resource "random_password" "master" {
+  count = var.manage_master_password ? 0 : 1
+
   length           = 32
   special          = true
   override_special = "!#$%^&*()-_=+[]{}<>?"
@@ -86,6 +119,8 @@ resource "random_password" "master" {
 }
 
 resource "aws_secretsmanager_secret" "master" {
+  count = var.manage_master_password ? 0 : 1
+
   name_prefix             = "${local.identifier}-master-"
   description             = "Master credentials for RDS ${local.identifier}"
   kms_key_id              = var.kms_key_arn
@@ -97,7 +132,9 @@ resource "aws_secretsmanager_secret" "master" {
 }
 
 resource "aws_secretsmanager_secret_version" "master" {
-  secret_id = aws_secretsmanager_secret.master.id
+  count = var.manage_master_password ? 0 : 1
+
+  secret_id = aws_secretsmanager_secret.master[0].id
   secret_string = jsonencode({
     username = var.master_username
     password = local.master_secret
@@ -163,6 +200,24 @@ resource "aws_vpc_security_group_ingress_rule" "from_sg" {
 
   tags = merge(local.common_tags, {
     Name = "${local.identifier}-ingress-sg"
+  })
+}
+
+# Map form of from_sg. for_each keys come from caller-chosen static labels, so
+# SG IDs that are only known after apply (e.g. created in the same run) are
+# accepted; the list form above needs every ID known at plan time.
+resource "aws_vpc_security_group_ingress_rule" "from_sg_map" {
+  for_each = var.allowed_security_groups
+
+  security_group_id            = aws_security_group.this.id
+  description                  = "DB ingress from caller-provided SG ${each.key}"
+  referenced_security_group_id = each.value
+  ip_protocol                  = "tcp"
+  from_port                    = local.port
+  to_port                      = local.port
+
+  tags = merge(local.common_tags, {
+    Name = "${local.identifier}-ingress-sg-${each.key}"
   })
 }
 
@@ -263,6 +318,13 @@ resource "aws_db_instance" "this" {
   password = local.master_secret
   port     = local.port
 
+  # null rather than false when unmanaged so existing plans are unchanged.
+  manage_master_user_password   = var.manage_master_password ? true : null
+  master_user_secret_kms_key_id = local.master_user_secret_kms_key_id
+
+  ca_cert_identifier                  = var.ca_cert_identifier
+  iam_database_authentication_enabled = var.iam_database_authentication_enabled
+
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [aws_security_group.this.id]
   parameter_group_name   = aws_db_parameter_group.this.name
@@ -273,7 +335,7 @@ resource "aws_db_instance" "this" {
   backup_retention_period  = var.backup_retention_days
   backup_window            = var.backup_window
   maintenance_window       = var.maintenance_window
-  copy_tags_to_snapshot    = true
+  copy_tags_to_snapshot    = var.copy_tags_to_snapshot
   delete_automated_backups = !local.is_prod
 
   # Deterministic ID prevents the timestamp()-induced perpetual diff.
@@ -292,7 +354,17 @@ resource "aws_db_instance" "this" {
   enabled_cloudwatch_logs_exports = local.db_log_exports
 
   auto_minor_version_upgrade = var.auto_minor_version_upgrade
-  apply_immediately          = !local.is_prod
+  apply_immediately          = local.apply_immediately
+
+  # Engine upgrades and other supported modifications go through an RDS Blue/Green
+  # deployment instead of an in-place modification. Omitted when disabled so
+  # existing plans are unchanged.
+  dynamic "blue_green_update" {
+    for_each = var.blue_green_update ? [1] : []
+    content {
+      enabled = true
+    }
+  }
 
   tags = merge(local.common_tags, {
     Name = local.identifier
@@ -338,8 +410,11 @@ resource "aws_db_instance" "replica" {
   monitoring_role_arn             = var.monitoring_interval > 0 ? aws_iam_role.monitoring[0].arn : null
   enabled_cloudwatch_logs_exports = local.db_log_exports
 
+  ca_cert_identifier                  = var.ca_cert_identifier
+  iam_database_authentication_enabled = var.iam_database_authentication_enabled
+
   skip_final_snapshot = true
-  apply_immediately   = !local.is_prod
+  apply_immediately   = local.apply_immediately
 
   tags = merge(local.common_tags, {
     Name    = "${local.identifier}-replica-${each.key}"
@@ -351,4 +426,66 @@ resource "aws_db_instance" "replica" {
     aws_iam_role_policy_attachment.monitoring,
     aws_cloudwatch_log_group.exports,
   ]
+}
+
+###############################################################################
+# CloudWatch alarms (optional)
+#
+# Primary instance only. Storage and memory thresholds are taken in GiB / MiB
+# and converted to the bytes the AWS/RDS metrics report.
+###############################################################################
+
+locals {
+  cloudwatch_alarms = var.create_cloudwatch_alarms ? {
+    cpu-utilization = {
+      metric_name         = "CPUUtilization"
+      comparison_operator = "GreaterThanThreshold"
+      threshold           = var.cloudwatch_alarm_thresholds.cpu_utilization_percent
+      description         = "Average CPU utilization of ${local.identifier} is above ${var.cloudwatch_alarm_thresholds.cpu_utilization_percent}%."
+    }
+    free-storage-space = {
+      metric_name         = "FreeStorageSpace"
+      comparison_operator = "LessThanThreshold"
+      threshold           = var.cloudwatch_alarm_thresholds.free_storage_space_gb * 1073741824
+      description         = "Free storage on ${local.identifier} is below ${var.cloudwatch_alarm_thresholds.free_storage_space_gb} GiB."
+    }
+    freeable-memory = {
+      metric_name         = "FreeableMemory"
+      comparison_operator = "LessThanThreshold"
+      threshold           = var.cloudwatch_alarm_thresholds.freeable_memory_mb * 1048576
+      description         = "Freeable memory on ${local.identifier} is below ${var.cloudwatch_alarm_thresholds.freeable_memory_mb} MiB."
+    }
+    database-connections = {
+      metric_name         = "DatabaseConnections"
+      comparison_operator = "GreaterThanThreshold"
+      threshold           = var.cloudwatch_alarm_thresholds.database_connections
+      description         = "Open connections on ${local.identifier} are above ${var.cloudwatch_alarm_thresholds.database_connections}."
+    }
+  } : {}
+}
+
+resource "aws_cloudwatch_metric_alarm" "this" {
+  for_each = local.cloudwatch_alarms
+
+  alarm_name          = "${local.identifier}-${each.key}"
+  alarm_description   = each.value.description
+  namespace           = "AWS/RDS"
+  metric_name         = each.value.metric_name
+  statistic           = "Average"
+  comparison_operator = each.value.comparison_operator
+  threshold           = each.value.threshold
+  period              = var.cloudwatch_alarm_thresholds.period_seconds
+  evaluation_periods  = var.cloudwatch_alarm_thresholds.evaluation_periods
+  treat_missing_data  = "missing"
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.this.identifier
+  }
+
+  alarm_actions = var.alarm_actions
+  ok_actions    = var.ok_actions
+
+  tags = merge(local.common_tags, {
+    Name = "${local.identifier}-${each.key}"
+  })
 }

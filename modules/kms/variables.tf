@@ -42,8 +42,30 @@ variable "deletion_window_in_days" {
 
 variable "multi_region" {
   type        = bool
-  description = "Create a multi-region primary key. Cross-region replicas must be added in the consuming regions."
+  description = "Create a multi-region primary key. Set replica_regions to have this module create the replicas."
   default     = false
+}
+
+variable "replica_regions" {
+  type        = set(string)
+  description = "Regions in which to create a replica of the multi-Region primary key, each with the same key policy, deletion window, alias and tags. Requires multi_region = true and must not include the primary key's region."
+  default     = []
+
+  validation {
+    condition     = alltrue([for r in var.replica_regions : can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", r))])
+    error_message = "replica_regions entries must be AWS region names, e.g. eu-west-1."
+  }
+}
+
+variable "rotation_period_in_days" {
+  type        = number
+  description = "Days between automatic key rotations, 90-2560. Null leaves the AWS default (365)."
+  default     = null
+
+  validation {
+    condition     = var.rotation_period_in_days == null ? true : (var.rotation_period_in_days >= 90 && var.rotation_period_in_days <= 2560 && floor(var.rotation_period_in_days) == var.rotation_period_in_days)
+    error_message = "rotation_period_in_days must be a whole number between 90 and 2560."
+  }
 }
 
 variable "key_administrators" {

@@ -45,6 +45,11 @@ module "vpc" {
   nat_gateway_mode = "per_az"
   enable_flow_logs = true
 
+  # Dedicated, internet-isolated subnets for RDS, and a default SG with no
+  # rules so nothing lands in it by accident.
+  enable_database_subnets       = true
+  manage_default_security_group = true
+
   enable_s3_gateway_endpoint = true
   interface_endpoints        = ["ecr.api", "ecr.dkr", "sts", "logs", "ec2"]
 }
@@ -104,10 +109,15 @@ module "eks" {
   }
 
   cluster_addons = {
-    vpc-cni    = {}
-    coredns    = {}
-    kube-proxy = {}
+    vpc-cni                = {}
+    coredns                = {}
+    kube-proxy             = {}
+    eks-pod-identity-agent = {}
   }
+
+  # STANDARD support only: clusters must be upgraded within the standard
+  # window rather than silently accruing extended-support charges.
+  upgrade_policy = { support_type = "STANDARD" }
 }
 
 ###############################################################################
@@ -129,9 +139,16 @@ module "rds" {
   master_username = "appadmin"
   kms_key_arn     = module.app_kms.key_arn
 
-  vpc_id                     = module.vpc.vpc_id
-  subnet_ids                 = module.vpc.private_subnet_ids
-  allowed_security_group_ids = [module.eks.node_security_group_id]
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.database_subnet_ids
+
+  # Map form: the node SG ID is only known after apply, and a for_each over
+  # a list of unknown IDs cannot be planned.
+  allowed_security_groups = { eks_nodes = module.eks.node_security_group_id }
+
+  # RDS owns the master credential in Secrets Manager; the password never
+  # enters Terraform state.
+  manage_master_password = true
 
   multi_az                 = true
   allocated_storage_gb     = 100
@@ -203,6 +220,7 @@ module "platform_roles" {
   source = "../../modules/iam-roles"
 
   name_prefix = local.name_prefix
+  environment = var.environment
   project     = var.project
 
   create_irsa_role          = true
@@ -211,4 +229,7 @@ module "platform_roles" {
   irsa_namespace            = var.app_namespace
   irsa_service_account_name = var.app_service_account
   irsa_inline_policy_json   = data.aws_iam_policy_document.app_artifacts_access.json
+  # The JSON references a bucket created in this apply, so its null-ness is
+  # unknown at plan time; the flag keeps the count decidable.
+  create_irsa_inline_policy = true
 }
