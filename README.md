@@ -8,84 +8,89 @@
 [![CI](https://github.com/kirilurbonas/terraform-aws-blueprint/actions/workflows/terraform-validate.yml/badge.svg)](https://github.com/kirilurbonas/terraform-aws-blueprint/actions/workflows/terraform-validate.yml)
 [![Release](https://img.shields.io/github/v/release/kirilurbonas/terraform-aws-blueprint?display_name=tag&sort=semver)](https://github.com/kirilurbonas/terraform-aws-blueprint/releases)
 
-An opinionated library of Terraform modules that codify the patterns a platform
-team typically reaches for on day one in AWS: a multi-AZ VPC, an EKS cluster
-with multiple node groups and IRSA wired up, a hardened RDS, a curated set of
-IAM roles, a secure-by-default S3 bucket, a customer-managed KMS key, and the
-S3 + DynamoDB pair that backs a remote `terraform { backend "s3" {} }`. Every
-module is independently consumable and follows the same conventions: validated
-inputs, consistent tagging, sensible production defaults, no hidden state.
+An opinionated library of Terraform modules that codify what a platform team
+reaches for on day one in AWS — networking, Kubernetes, relational databases,
+load balancing, image delivery, encryption, IAM, and remote state — with the
+security decisions already made. Every module is independently consumable and
+follows the same contract: validated inputs, consistent tagging, production
+defaults, no hidden coupling between modules.
 
-## Architecture (full-stack example)
+What sets it apart is how the claims are checked. Every example is **planned
+for real on every pull request** (against a local AWS API emulator, so no
+account is involved) and the resulting plan must satisfy a set of
+[security policies](policy/) — no admin ports open to the internet,
+encryption everywhere, IMDSv2, TLS 1.3, no wildcard IAM, scoped OIDC trust,
+the tagging contract. See [Verification](#verification).
 
+## Architecture
+
+The two application-shaped examples, composed only from this library:
+
+```mermaid
+flowchart TB
+  subgraph vpc["vpc — 3 AZs · per-AZ NAT · flow logs · VPC endpoints · locked default SG"]
+    direction TB
+    subgraph pub[public subnets]
+      alb["alb<br/>TLS 1.3 · HTTP→HTTPS · WAF-ready"]
+    end
+    subgraph priv[private subnets]
+      eks["eks<br/>managed node groups · IMDSv2 · Access Entries<br/>Pod Identity / IRSA · KMS secrets"]
+      svc[ECS / EKS service]
+    end
+    subgraph dbt[database subnets — no internet route]
+      rds[("rds<br/>Multi-AZ · read replicas<br/>RDS-managed secret")]
+      aurora[("aurora<br/>Serverless v2 · reader autoscaling<br/>RDS-managed secret")]
+    end
+  end
+
+  alb --> svc
+  eks -->|SG-to-SG| rds
+  svc -->|SG-to-SG| aurora
+  ecr[("ecr<br/>immutable · scan on push")] -.-> svc
+  s3[("s3-secure<br/>TLS-only · SSE-KMS · Object Lock")]
+  kms{{"kms<br/>rotation · multi-region replicas"}} -.-> rds & aurora & s3 & ecr & eks
+  iam["iam-roles<br/>GitHub OIDC CI deployer · IRSA · boundaries"] -.-> ecr
+  state[("state-backend<br/>S3-native locking")]
 ```
-              ┌──────────────────────────────────────────────────────────────┐
-              │                            VPC                                │
-              │  3 AZs · per-AZ NAT · S3 gateway + ECR/STS/Logs endpoints     │
-              │  Flow Logs → S3 (encrypted, lifecycle-tiered)                 │
-              └─────┬───────────────────────┬──────────────────────┬──────────┘
-                    │ private subnets        │                      │
-                    ▼                         ▼                      ▼
-         ┌──────────────────┐       ┌──────────────────┐    ┌──────────────┐
-         │       EKS        │       │       RDS        │    │  S3 secure   │
-         │  control plane   │       │  Postgres 16     │    │   bucket     │
-         │  • system NG     │       │  Multi-AZ + RR   │◀───│  KMS·VVS·TLS │
-         │    (ON_DEMAND)   │       │  Secrets Manager │    └─────┬────────┘
-         │  • apps NG       │       └─────▲────────────┘          │
-         │    (SPOT, mixed) │             │ SG-to-SG only         │
-         │  • addons: CNI / │             │                       │
-         │    coredns /     │             │                       │
-         │    kube-proxy    │             │                       │
-         │  • IMDSv2 req.   │             │                       │
-         │  • Access Entries│             │                       │
-         └────┬─────────────┘             │                       │
-              │ OIDC                       │                       │
-              ▼                            │                       │
-         ┌──────────────────────────────────┴───────────────────────┴────┐
-         │                  Customer-managed KMS key                     │
-         │      (RDS storage · S3 SSE-KMS · Secrets Manager · …)         │
-         └───────────────────────────────────────────────────────────────┘
 
-              ┌──────────────────────────────────────────────────────────────┐
-              │   IAM roles: eks-cluster · eks-node · IRSA · ci-deployer     │
-              │       IRSA: app/app SA → s3:* on artifacts bucket            │
-              └──────────────────────────────────────────────────────────────┘
-
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │  state-backend (one-off bootstrap)                                      │
-  │  S3 bucket (versioned, encrypted, TLS-only) + DynamoDB lock table       │
-  │  → `terraform { backend "s3" {…} }` for every downstream stack          │
-  └─────────────────────────────────────────────────────────────────────────┘
-```
+`full-stack` is the EKS + RDS + S3 path; `web-app` is the ALB + Aurora + ECR +
+GitHub-OIDC path. `state-backend` is bootstrapped once and backs every other
+stack.
 
 ## Quick start
 
 ```hcl
 module "vpc" {
-  source = "github.com/kirilurbonas/terraform-aws-blueprint//modules/vpc?ref=v0.2.0"
+  source = "github.com/kirilurbonas/terraform-aws-blueprint//modules/vpc?ref=v0.5.0"
 
   name_prefix        = "platform"
   environment        = "prod"
   project            = "blueprint"
   vpc_cidr           = "10.20.0.0/16"
   availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+  enable_database_subnets       = true
+  manage_default_security_group = true
 }
 ```
 
-For end-to-end (`vpc` + `eks` + `rds` + `s3-secure` + `kms` + IRSA) see
+Full compositions: [`examples/web-app`](examples/web-app/) and
 [`examples/full-stack`](examples/full-stack/).
 
 ## Modules
 
 | Module | Purpose |
 |--------|---------|
-| [`vpc`](modules/vpc/) | Multi-AZ VPC, public/private subnets, NAT (single or per-AZ), optional VPC Flow Logs to S3 with a hardened module-managed delivery bucket and optional parquet/hour-partitioned delivery, S3 gateway + interface endpoints. |
-| [`eks`](modules/eks/) | EKS control plane + **multiple managed node groups** (ON_DEMAND / SPOT, taints/labels per group), **launch-template-backed nodes with IMDSv2 required**, **managed add-ons** (CNI / coredns / kube-proxy / EBS CSI / …), OIDC provider for IRSA, **Access Entries** (no `aws-auth`), KMS envelope encryption, full control-plane logging. |
-| [`rds`](modules/rds/) | Multi-AZ RDS (Postgres / MySQL), KMS-encrypted, Secrets-Manager-backed master credentials, Performance Insights, Enhanced Monitoring, deterministic final snapshot, **managed CloudWatch log groups**, **read replicas**. |
-| [`iam-roles`](modules/iam-roles/) | Curated platform IAM roles: EKS cluster, EKS node, IRSA, cross-account CI deployer (allow-only statement lists). |
-| [`s3-secure`](modules/s3-secure/) | S3 bucket with public access blocked, ACLs disabled, encryption + versioning + lifecycle + TLS-only policy + strict encryption-header / KMS-key enforcement on uploads. |
-| [`kms`](modules/kms/) | Customer-managed KMS key with annual rotation, alias, and an explicit key policy (administrators / users / service principals). |
-| [`state-backend`](modules/state-backend/) | S3 bucket + DynamoDB lock table for a Terraform remote backend. Emits a ready-to-paste backend config block. |
+| [`vpc`](modules/vpc/) | Multi-AZ VPC with public / private / optional **isolated database** tiers, configurable subnet sizing, NAT (single or per-AZ), rule-less default security group, flow logs to S3 (SSE-S3 or KMS) or CloudWatch Logs, S3 gateway + interface endpoints with optional endpoint policies. |
+| [`eks`](modules/eks/) | EKS control plane + **multiple managed node groups** (ON_DEMAND / SPOT), **launch templates with IMDSv2 required**, **managed add-ons**, **Access Entries** (no `aws-auth`), **Pod Identity** and/or IRSA, KMS envelope encryption, upgrade policy, full control-plane logging. |
+| [`rds`](modules/rds/) | Multi-AZ RDS (Postgres / MySQL), KMS-encrypted, **RDS-managed master secret** (opt-in), Performance Insights, Enhanced Monitoring, read replicas, managed log groups, CloudWatch alarms, blue/green updates. |
+| [`aurora`](modules/aurora/) | Aurora PostgreSQL / MySQL cluster: always-encrypted, RDS-managed master secret, instances as a map, **Serverless v2**, reader autoscaling, IAM auth, managed log groups and parameter group, Database Insights, alarms. |
+| [`alb`](modules/alb/) | Application Load Balancer: HTTPS with a **TLS 1.3 policy enforced**, HTTP that can only redirect, invalid headers dropped, strictest desync mitigation, target groups and host/path rules as maps, access/connection logs, WAFv2. |
+| [`ecr`](modules/ecr/) | ECR repositories: **immutable tags**, scan on push, KMS encryption, lifecycle policy, scoped cross-account / Lambda pull, optional registry scanning, pull-through cache, and replication. |
+| [`iam-roles`](modules/iam-roles/) | Platform IAM roles: EKS cluster, EKS node, IRSA, and a CI deployer trusted via **GitHub Actions OIDC** (repo + branch / environment scoped) or cross-account; permissions boundaries everywhere. |
+| [`s3-secure`](modules/s3-secure/) | S3 bucket with public access blocked, ACLs disabled, encryption + versioning + lifecycle + TLS-only policy + encryption-header enforcement, Object Lock, replication, EventBridge, Intelligent-Tiering. |
+| [`kms`](modules/kms/) | Customer-managed KMS key with rotation, alias, explicit key policy, and **multi-region replicas** without provider aliases. |
+| [`state-backend`](modules/state-backend/) | Remote-state bucket with **S3-native locking** (or DynamoDB), access logging, and DR replication. Emits a ready-to-paste backend block. |
 
 ## Examples
 
@@ -93,7 +98,8 @@ For end-to-end (`vpc` + `eks` + `rds` + `s3-secure` + `kms` + IRSA) see
 |---------|---------------|-----------------------|
 | [`simple-vpc`](examples/simple-vpc/) | Minimal `vpc` call. | ~$32/mo |
 | [`eks-cluster`](examples/eks-cluster/) | `vpc` + `eks` wired together; private endpoint, default node group, managed add-ons, VPC endpoints. | ~$320/mo |
-| [`full-stack`](examples/full-stack/) | `vpc` + `eks` + `rds` + `s3-secure` + `kms` + IRSA — two node groups, read replica, fully tagged. | ~$1060/mo |
+| [`full-stack`](examples/full-stack/) | `vpc` + `eks` + `rds` + `s3-secure` + `kms` + IRSA — two node groups, database tier, read replica, RDS-managed secret. | ~$1060/mo |
+| [`web-app`](examples/web-app/) | `vpc` + `alb` + `aurora` + `ecr` + `kms` + GitHub-OIDC CI role — the edge, data, and delivery layers for a containerised service, with chained security groups. | ~$300/mo |
 | [`prod-overrides`](examples/prod-overrides/) | `override.tf` pattern for bolting `prevent_destroy = true` onto module-managed stateful resources. | ~$32/mo |
 
 ## Design principles
@@ -122,7 +128,7 @@ For end-to-end (`vpc` + `eks` + `rds` + `s3-secure` + `kms` + IRSA) see
 - **Tagging is a contract.** Every resource gets `Name`, `Environment`,
   `ManagedBy=Terraform`, `Project`, and a `Module` tag, merged with any
   caller-supplied tags via a shared `locals.common_tags` map. The pattern is
-  identical across all seven modules.
+  identical across every module.
 - **Consistent naming.** Resources follow
   `${name_prefix}-${environment}-${resource}` unless an AWS naming constraint
   forces otherwise.
@@ -167,12 +173,16 @@ hardcodes a region or account ID.
 │   ├── rds/                 # Postgres/MySQL, Secrets Manager, read replicas
 │   ├── iam-roles/           # cluster / node / IRSA / CI deployer
 │   ├── s3-secure/           # secure-by-default bucket
-│   ├── kms/                 # CMK with explicit policy
-│   └── state-backend/       # S3 + DynamoDB for `terraform backend "s3"`
+│   ├── kms/                 # CMK with explicit policy, multi-region replicas
+│   ├── state-backend/       # remote-state bucket, S3-native locking
+│   ├── alb/                 # HTTPS-only application load balancer
+│   ├── aurora/              # Aurora Postgres/MySQL, Serverless v2
+│   └── ecr/                 # immutable, scanned image repositories
 ├── examples/
 │   ├── simple-vpc/          # sandbox VPC
 │   ├── eks-cluster/         # VPC + EKS
 │   ├── full-stack/          # VPC + EKS + RDS + S3 + KMS + IRSA
+│   ├── web-app/             # VPC + ALB + Aurora + ECR + GitHub OIDC
 │   └── prod-overrides/      # override.tf pattern for prevent_destroy
 ├── policy/                  # Conftest rules evaluated on example plan JSON
 ├── scripts/

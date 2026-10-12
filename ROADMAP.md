@@ -26,8 +26,8 @@ are on, and breaking changes require a major bump.
 | `v0.2.0` | KMS + state-backend, EKS access entries, multi-NG, tests | Released |
 | `v0.2.1` | tflint fix in the full-stack example | Released |
 | `v0.3.0` | Foundation: linting, scanning, release + docs enforcement | Released |
-| **`v0.4.0`** | **Module hardening + policy-as-code** | **Ready to tag** |
-| `v0.5.0` | Surface expansion | Planned |
+| `v0.4.0` | Module hardening + policy-as-code | Ready to tag |
+| **`v0.5.0`** | **Surface expansion: alb, aurora, ecr** | **Ready to tag** |
 | `v1.0.0` | Contract freeze | Planned |
 
 ---
@@ -187,11 +187,11 @@ Every item is additive and opt-in. Defaults do not change until `v1.0.0`.
 Three modules, chosen because the existing set cannot serve a working
 application without them:
 
-- [ ] **`alb`** — application load balancer, the ingress path for the EKS and
+- [x] **`alb`** — application load balancer, the ingress path for the EKS and
       ECS workloads the library already provisions compute for.
-- [ ] **`aurora`** — `aws_rds_cluster`, as a sibling to `rds` rather than a set
+- [x] **`aurora`** — `aws_rds_cluster`, as a sibling to `rds` rather than a set
       of conditionals bolted into it.
-- [ ] **`ecr`** — repositories with lifecycle policies, scan-on-push, and KMS.
+- [x] **`ecr`** — repositories with lifecycle policies, scan-on-push, and KMS.
 
 Each ships with `tests/basic.tftest.hcl`, a README with terraform-docs markers,
 a Dependabot entry, and a worked example.
