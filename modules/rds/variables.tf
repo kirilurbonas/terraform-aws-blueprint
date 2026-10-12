@@ -147,6 +147,31 @@ variable "port" {
   default     = null
 }
 
+variable "manage_master_password" {
+  type        = bool
+  description = "Let RDS generate and rotate the master password in an RDS-managed Secrets Manager secret (manage_master_user_password). When true, no random_password or module-managed secret is created, the password never enters Terraform state, master_password / master_secret_arn return null, and the secret ARN is exposed as master_user_secret_arn."
+  default     = false
+  nullable    = false
+}
+
+variable "master_user_secret_kms_key_id" {
+  type        = string
+  description = "KMS key (ARN, key ID, or alias) for the RDS-managed master user secret. Only used when manage_master_password = true. Falls back to kms_key_arn, then to the AWS-managed aws/secretsmanager key."
+  default     = null
+
+  validation {
+    condition     = var.master_user_secret_kms_key_id == null || can(regex("^(arn:aws[a-zA-Z-]*:kms:[a-z0-9-]+:[0-9]{12}:(key|alias)/.+|alias/.+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|mrk-[0-9a-f]{32})$", var.master_user_secret_kms_key_id))
+    error_message = "master_user_secret_kms_key_id must be a KMS key ARN, alias ARN, alias/<name>, key ID, or multi-Region key ID."
+  }
+}
+
+variable "iam_database_authentication_enabled" {
+  type        = bool
+  description = "Enable IAM database authentication on the primary and its read replicas."
+  default     = false
+  nullable    = false
+}
+
 ###############################################################################
 # Networking
 ###############################################################################
@@ -181,8 +206,22 @@ variable "allowed_cidr_blocks" {
 
 variable "allowed_security_group_ids" {
   type        = list(string)
-  description = "Security group IDs allowed to reach the DB port."
+  description = "Security group IDs allowed to reach the DB port. Every ID must be known at plan time; use allowed_security_groups for IDs created in the same apply."
   default     = []
+}
+
+variable "allowed_security_groups" {
+  type        = map(string)
+  description = "Security groups allowed to reach the DB port, as a map of static caller-chosen label -> SG ID. Required instead of allowed_security_group_ids whenever an ID is computed in the same apply (e.g. module.eks.node_security_group_id). Labels must be known at plan time; values need not be."
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition = alltrue([
+      for label, id in var.allowed_security_groups : can(regex("^[a-zA-Z0-9_-]{1,64}$", label)) && can(regex("^sg-", id))
+    ])
+    error_message = "allowed_security_groups keys must be 1-64 alphanumerics, hyphens, or underscores, and values must be security group IDs (sg-...)."
+  }
 }
 
 ###############################################################################
@@ -228,6 +267,37 @@ variable "auto_minor_version_upgrade" {
   type        = bool
   description = "Allow RDS to apply minor engine upgrades automatically during the maintenance window."
   default     = true
+}
+
+variable "apply_immediately" {
+  type        = bool
+  description = "Apply modifications immediately instead of in the next maintenance window. Null keeps the module's environment-based behaviour: immediately outside prod, maintenance window in prod."
+  default     = null
+}
+
+variable "copy_tags_to_snapshot" {
+  type        = bool
+  description = "Copy instance tags to snapshots of the primary instance."
+  default     = true
+  nullable    = false
+}
+
+variable "blue_green_update" {
+  type        = bool
+  description = "Route changes that would otherwise modify the primary in place (e.g. engine upgrades) through an RDS Blue/Green deployment."
+  default     = false
+  nullable    = false
+}
+
+variable "ca_cert_identifier" {
+  type        = string
+  description = "Certificate authority for the server certificate (e.g. rds-ca-rsa2048-g1, rds-ca-rsa4096-g1, rds-ca-ecc384-g1). Applied to the primary and replicas. Null leaves the RDS regional default."
+  default     = null
+
+  validation {
+    condition     = var.ca_cert_identifier == null || can(regex("^rds-ca-[a-z0-9-]+$", var.ca_cert_identifier))
+    error_message = "ca_cert_identifier must be an RDS CA identifier of the form rds-ca-<name> (e.g. rds-ca-rsa2048-g1)."
+  }
 }
 
 ###############################################################################
@@ -277,6 +347,79 @@ variable "cloudwatch_log_kms_key_arn" {
   type        = string
   description = "Optional KMS key ARN for encrypting the CloudWatch log groups that receive exported DB logs."
   default     = null
+}
+
+variable "create_cloudwatch_alarms" {
+  type        = bool
+  description = "Create CloudWatch metric alarms on the primary instance for CPUUtilization, FreeStorageSpace, FreeableMemory, and DatabaseConnections."
+  default     = false
+  nullable    = false
+}
+
+variable "cloudwatch_alarm_thresholds" {
+  type = object({
+    cpu_utilization_percent = optional(number, 80)
+    free_storage_space_gb   = optional(number, 10)
+    freeable_memory_mb      = optional(number, 256)
+    database_connections    = optional(number, 100)
+    period_seconds          = optional(number, 300)
+    evaluation_periods      = optional(number, 3)
+  })
+  description = "Thresholds and evaluation window for the alarms created by create_cloudwatch_alarms. Omitted attributes take their defaults. database_connections should be sized to the instance class's max_connections."
+  default     = {}
+  nullable    = false
+
+  validation {
+    condition     = var.cloudwatch_alarm_thresholds.cpu_utilization_percent > 0 && var.cloudwatch_alarm_thresholds.cpu_utilization_percent <= 100
+    error_message = "cloudwatch_alarm_thresholds.cpu_utilization_percent must be greater than 0 and at most 100."
+  }
+
+  validation {
+    condition = (
+      var.cloudwatch_alarm_thresholds.free_storage_space_gb > 0 &&
+      var.cloudwatch_alarm_thresholds.freeable_memory_mb > 0 &&
+      var.cloudwatch_alarm_thresholds.database_connections > 0
+    )
+    error_message = "cloudwatch_alarm_thresholds free_storage_space_gb, freeable_memory_mb, and database_connections must be greater than 0."
+  }
+
+  validation {
+    condition     = var.cloudwatch_alarm_thresholds.period_seconds >= 60 && var.cloudwatch_alarm_thresholds.period_seconds % 60 == 0
+    error_message = "cloudwatch_alarm_thresholds.period_seconds must be a positive multiple of 60 (standard-resolution RDS metrics)."
+  }
+
+  validation {
+    condition     = var.cloudwatch_alarm_thresholds.evaluation_periods >= 1 && floor(var.cloudwatch_alarm_thresholds.evaluation_periods) == var.cloudwatch_alarm_thresholds.evaluation_periods
+    error_message = "cloudwatch_alarm_thresholds.evaluation_periods must be a whole number of at least 1."
+  }
+}
+
+variable "alarm_actions" {
+  type        = list(string)
+  description = "SNS topic ARNs notified when an alarm enters the ALARM state."
+  default     = []
+  nullable    = false
+
+  validation {
+    condition = alltrue([
+      for arn in var.alarm_actions : can(regex("^arn:aws[a-zA-Z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_.-]{1,256}$", arn))
+    ])
+    error_message = "alarm_actions must contain SNS topic ARNs (arn:<partition>:sns:<region>:<account-id>:<topic>)."
+  }
+}
+
+variable "ok_actions" {
+  type        = list(string)
+  description = "SNS topic ARNs notified when an alarm returns to the OK state."
+  default     = []
+  nullable    = false
+
+  validation {
+    condition = alltrue([
+      for arn in var.ok_actions : can(regex("^arn:aws[a-zA-Z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_.-]{1,256}$", arn))
+    ])
+    error_message = "ok_actions must contain SNS topic ARNs (arn:<partition>:sns:<region>:<account-id>:<topic>)."
+  }
 }
 
 ###############################################################################
