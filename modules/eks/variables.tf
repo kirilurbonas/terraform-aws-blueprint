@@ -104,6 +104,33 @@ variable "oidc_thumbprint_list" {
   default     = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]
 }
 
+variable "create_oidc_provider" {
+  type        = bool
+  description = "Whether to create the IAM OIDC provider used by IRSA. Set to false when every workload uses EKS Pod Identity, or when the provider is managed elsewhere; oidc_provider_arn is then null."
+  default     = true
+}
+
+variable "upgrade_policy" {
+  type = object({
+    support_type = string
+  })
+  description = "Cluster upgrade policy. support_type is STANDARD or EXTENDED. null leaves the AWS default (EXTENDED) in place."
+  default     = null
+
+  validation {
+    condition     = var.upgrade_policy == null || contains(["STANDARD", "EXTENDED"], try(var.upgrade_policy.support_type, ""))
+    error_message = "upgrade_policy.support_type must be one of: STANDARD, EXTENDED."
+  }
+}
+
+variable "zonal_shift_config" {
+  type = object({
+    enabled = bool
+  })
+  description = "ARC zonal shift configuration for the cluster. null leaves the AWS default (disabled) in place."
+  default     = null
+}
+
 ###############################################################################
 # Access entries (replaces aws-auth)
 ###############################################################################
@@ -248,8 +275,86 @@ variable "cluster_addons" {
     service_account_role_arn    = optional(string)
     configuration_values        = optional(string)
   }))
-  description = "Managed EKS add-ons, keyed by add-on name (vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver, ...). Empty = none. Versions default to latest compatible when omitted."
+  description = "Managed EKS add-ons, keyed by add-on name (vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver, eks-pod-identity-agent, ...). Empty = none. Versions default to latest compatible when omitted. service_account_role_arn sets an IRSA role for the add-on; configuration_values takes a JSON (or YAML) object matching the add-on's configuration schema."
   default     = {}
+
+  validation {
+    condition = alltrue([
+      for _, addon in var.cluster_addons : contains(["NONE", "OVERWRITE"], addon.resolve_conflicts_on_create)
+    ])
+    error_message = "Each add-on resolve_conflicts_on_create must be one of: NONE, OVERWRITE."
+  }
+
+  validation {
+    condition = alltrue([
+      for _, addon in var.cluster_addons : contains(["NONE", "OVERWRITE", "PRESERVE"], addon.resolve_conflicts_on_update)
+    ])
+    error_message = "Each add-on resolve_conflicts_on_update must be one of: NONE, OVERWRITE, PRESERVE."
+  }
+
+  validation {
+    condition = alltrue([
+      for _, addon in var.cluster_addons :
+      addon.service_account_role_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", addon.service_account_role_arn))
+    ])
+    error_message = "Each add-on service_account_role_arn must be an IAM role ARN."
+  }
+
+  # yamldecode is a superset of jsondecode, so this accepts both formats the
+  # EKS API takes while still rejecting malformed input and bare scalars.
+  validation {
+    condition = alltrue([
+      for _, addon in var.cluster_addons :
+      addon.configuration_values == null || can(keys(yamldecode(addon.configuration_values)))
+    ])
+    error_message = "Each add-on configuration_values must be a JSON (or YAML) object, e.g. jsonencode({ ... })."
+  }
+}
+
+###############################################################################
+# Pod Identity
+###############################################################################
+
+variable "pod_identity_associations" {
+  type = map(object({
+    namespace       = string
+    service_account = string
+    role_arn        = string
+  }))
+  description = "EKS Pod Identity associations, keyed by a stable name. Each binds a Kubernetes service account to an IAM role. Requires the eks-pod-identity-agent add-on (see cluster_addons)."
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for _, a in var.pod_identity_associations :
+      can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", a.namespace))
+    ])
+    error_message = "Each pod identity association namespace must be a valid Kubernetes namespace name (lowercase alphanumerics and hyphens, max 63 chars)."
+  }
+
+  validation {
+    condition = alltrue([
+      for _, a in var.pod_identity_associations :
+      can(regex("^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$", a.service_account))
+    ])
+    error_message = "Each pod identity association service_account must be a valid Kubernetes service account name."
+  }
+
+  validation {
+    condition = alltrue([
+      for _, a in var.pod_identity_associations :
+      can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", a.role_arn))
+    ])
+    error_message = "Each pod identity association role_arn must be an IAM role ARN."
+  }
+
+  # EKS allows a single association per service account.
+  validation {
+    condition = length(distinct([
+      for _, a in var.pod_identity_associations : "${a.namespace}/${a.service_account}"
+    ])) == length(var.pod_identity_associations)
+    error_message = "Each namespace/service_account pair may appear in only one pod identity association."
+  }
 }
 
 variable "tags" {

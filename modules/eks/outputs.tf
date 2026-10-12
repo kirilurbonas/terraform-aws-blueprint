@@ -39,8 +39,8 @@ output "cluster_oidc_issuer_url" {
 }
 
 output "oidc_provider_arn" {
-  description = "ARN of the IAM OIDC provider that backs IRSA for this cluster."
-  value       = aws_iam_openid_connect_provider.this.arn
+  description = "ARN of the IAM OIDC provider that backs IRSA for this cluster. null when create_oidc_provider = false."
+  value       = try(aws_iam_openid_connect_provider.this[0].arn, null)
 }
 
 output "node_groups" {
@@ -71,6 +71,16 @@ output "kms_key_arn" {
 output "addon_versions" {
   description = "Map of installed add-on name -> resolved version."
   value       = { for k, a in aws_eks_addon.this : k => a.addon_version }
+}
+
+output "pod_identity_associations" {
+  description = "Map of pod identity association key -> { association_arn, association_id }."
+  value = {
+    for k, a in aws_eks_pod_identity_association.this : k => {
+      association_arn = a.association_arn
+      association_id  = a.association_id
+    }
+  }
 }
 
 output "kubeconfig_command" {

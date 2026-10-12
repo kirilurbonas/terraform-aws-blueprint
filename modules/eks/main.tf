@@ -222,6 +222,24 @@ resource "aws_eks_cluster" "this" {
     resources = ["secrets"]
   }
 
+  # Both blocks are omitted when their variable is null, leaving the AWS
+  # defaults in charge (EXTENDED support, zonal shift off) so existing clusters
+  # see no diff. Set support_type = "STANDARD" to avoid extended-support
+  # charges once a version leaves standard support.
+  dynamic "upgrade_policy" {
+    for_each = var.upgrade_policy == null ? [] : [var.upgrade_policy]
+    content {
+      support_type = upgrade_policy.value.support_type
+    }
+  }
+
+  dynamic "zonal_shift_config" {
+    for_each = var.zonal_shift_config == null ? [] : [var.zonal_shift_config]
+    content {
+      enabled = zonal_shift_config.value.enabled
+    }
+  }
+
   tags = merge(local.common_tags, {
     Name = local.cluster_name
   })
@@ -271,9 +289,14 @@ resource "aws_kms_alias" "eks" {
 # cluster. We pin it as a literal here instead of dialling the issuer with the
 # tls provider at plan time (which is fragile for private clusters and
 # triggers replacements on cert rotation).
+#
+# Set create_oidc_provider = false for clusters that rely solely on EKS Pod
+# Identity, or when the provider is managed outside this module.
 ###############################################################################
 
 resource "aws_iam_openid_connect_provider" "this" {
+  count = var.create_oidc_provider ? 1 : 0
+
   url             = aws_eks_cluster.this.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = var.oidc_thumbprint_list
@@ -281,6 +304,12 @@ resource "aws_iam_openid_connect_provider" "this" {
   tags = merge(local.common_tags, {
     Name = "${local.cluster_name}-oidc"
   })
+}
+
+# The provider had no count before v0.4.0; migrate existing state in place.
+moved {
+  from = aws_iam_openid_connect_provider.this
+  to   = aws_iam_openid_connect_provider.this[0]
 }
 
 ###############################################################################
@@ -479,6 +508,29 @@ resource "aws_eks_addon" "this" {
 
   # Addons that schedule on nodes (vpc-cni excepted) need a node group ready.
   depends_on = [aws_eks_node_group.this]
+}
+
+###############################################################################
+# EKS Pod Identity associations
+#
+# Binds a Kubernetes service account to an IAM role without an OIDC provider.
+# Pods only receive credentials when the eks-pod-identity-agent add-on is
+# running on the node, so add it to cluster_addons alongside these entries.
+# The role's trust policy must allow pods.eks.amazonaws.com to call
+# sts:AssumeRole and sts:TagSession.
+###############################################################################
+
+resource "aws_eks_pod_identity_association" "this" {
+  for_each = var.pod_identity_associations
+
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = each.value.namespace
+  service_account = each.value.service_account
+  role_arn        = each.value.role_arn
+
+  tags = merge(local.common_tags, {
+    Name = "${local.cluster_name}-pod-identity-${each.key}"
+  })
 }
 
 ###############################################################################
