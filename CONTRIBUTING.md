@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for the interest. This repo is a portfolio of opinionated production
+Thanks for the interest. This repo is a library of opinionated production
 Terraform modules; the bar for changes is "would a platform team actually want
 this in their library."
 
@@ -25,7 +25,8 @@ The hooks run `terraform fmt`, `terraform validate`, `terraform_docs`,
 `tflint`, and `trivy` on every commit.
 
 You also need `terraform`, `tflint`, `terraform-docs`, and `trivy` on `PATH`
-for the `Makefile` targets.
+for the `Makefile` targets, plus `conftest` and Moto (`pipx install
+'moto[server]'`) for `make policy`.
 
 ## Running checks
 
@@ -33,18 +34,25 @@ Everything goes through the [`Makefile`](Makefile), and CI calls the same
 targets — so a green `make all` locally is a green pipeline:
 
 ```bash
-make all             # fmt-check, validate, validate-floor, lint, test, docs-check, security
+make all             # fmt-check, validate, validate-floor, lint, test, docs-check, security, policy
 ```
 
 Individual targets: `make help`.
 
-Two of them are worth knowing about:
+Three of them are worth knowing about:
 
 - **`make validate-floor`** re-validates every module with the `aws` provider
   pinned to the floor of its declared constraint. Without it, a module can
   start depending on a newer provider feature and nothing notices until a
   consumer pinned to the floor hits a plan-time error — which is exactly how
   `vpc` and `state-backend` came to require v6 while advertising `>= 5.40`.
+- **`make policy`** plans every example against [Moto](https://github.com/getmoto/moto)
+  (a local AWS API emulator — no account, no credentials) and evaluates the
+  plan JSON with the Conftest rules in [`policy/`](policy/). Module tests
+  check that each module builds what it says; policy checks that what the
+  examples actually compose stays inside the library's security invariants.
+  A new invariant needs a rule *and* a violating fixture in
+  `policy/policy_test.rego`.
 - **`make lint`** relies on the shared [`.tflint.hcl`](.tflint.hcl). Never pass
   `--only` on the command line: it narrows the rule set silently, and it is why
   the AWS ruleset went unenforced for two releases.

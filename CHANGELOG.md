@@ -10,6 +10,150 @@ are explicitly called out under each release.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-12
+
+Module hardening, and a policy gate that plans every example for real. Every
+change is additive: on default inputs the plan for an existing stack is
+unchanged, and where a resource gained a `count`, a `moved` block migrates
+state automatically. Defaults that will change at `v1.0.0` are listed in
+[`docs/upgrading.md`](docs/upgrading.md).
+
+### Fixed
+
+- **`examples/full-stack` could not be planned.** `rds` created its
+  security-group ingress with `for_each = toset(var.allowed_security_group_ids)`,
+  and the example passed `module.eks.node_security_group_id` — unknown until
+  apply — so `terraform plan` failed with *Invalid for_each argument*.
+  `terraform validate` cannot see this, so it shipped in every release. `rds`
+  now takes `allowed_security_groups`, a map with caller-chosen static keys,
+  and the example uses it ([ADR 0007](docs/adr/0007-static-keys-for-computed-ids.md)).
+- **Same class of bug in `iam-roles`:** the IRSA inline policy's `count`
+  depended on whether a computed JSON string was null. New
+  `create_irsa_inline_policy` makes the decision plan-time-known.
+
+### Added
+
+#### Policy-as-code
+
+- **`policy/`** — Conftest rules evaluated on the plan JSON of every example:
+  no SSH/RDP from the internet, S3 public-access blocks and encryption per
+  bucket, ACLs disabled, RDS/Aurora encrypted and private, encrypted EBS,
+  IMDSv2-only launch templates, EKS secrets encryption and no world-open API
+  endpoint, ALB invalid-header dropping / HTTPS-only / TLS 1.3, KMS rotation,
+  log retention, no admin-policy attachments, no `Action: "*"`, no open or
+  unscoped web-identity trust, and the required tag set. Each rule has a
+  violating fixture in `policy/policy_test.rego`.
+- **`scripts/policy-check.sh` / `make policy`** plans each example against
+  Moto (a local AWS API emulator) — no account or credentials — and runs
+  Conftest on the result. New `policy` CI job and PR-summary row
+  ([ADR 0003](docs/adr/0003-policy-on-plan-json.md)).
+
+#### `rds`
+
+- `manage_master_password` — RDS-native `manage_master_user_password`, so the
+  master password never enters Terraform state. Optional
+  `master_user_secret_kms_key_id` (falls back to `kms_key_arn`). New output
+  `master_user_secret_arn`; `master_password` / `master_secret_arn` are `null`
+  in this mode. **Default flips at 1.0.**
+- `allowed_security_groups` (map, label → SG ID) for ingress from security
+  groups created in the same apply.
+- `ca_cert_identifier`, `copy_tags_to_snapshot`,
+  `iam_database_authentication_enabled`, `apply_immediately` (null keeps the
+  existing non-prod-applies-immediately rule), `blue_green_update`.
+- Optional CloudWatch alarms (CPU, free storage, freeable memory, connections)
+  behind `create_cloudwatch_alarms`, with `cloudwatch_alarm_thresholds` and
+  SNS `alarm_actions` / `ok_actions`. New output `cloudwatch_alarm_arns`.
+
+#### `eks`
+
+- **EKS Pod Identity** — `pod_identity_associations` creates
+  `aws_eks_pod_identity_association`s; new `pod_identity_associations` output.
+  `eks-pod-identity-agent` is documented in the add-on set
+  ([ADR 0005](docs/adr/0005-workload-identity.md)).
+- `create_oidc_provider` (default `true`) to drop the IRSA OIDC provider on
+  Pod-Identity-only clusters; `oidc_provider_arn` is `null` when off.
+- `upgrade_policy` (`STANDARD` / `EXTENDED`) and `zonal_shift_config`.
+- `cluster_addons` validation: `service_account_role_arn` must be an IAM role
+  ARN, `configuration_values` a JSON/YAML object, `resolve_conflicts_*` values
+  the EKS API accepts.
+
+#### `vpc`
+
+- `manage_default_security_group` strips every rule from the VPC's default
+  security group (CIS EC2.2). **Default flips at 1.0.**
+- **Database subnet tier** — `enable_database_subnets`, per-AZ route tables
+  with no internet route (`database_subnets_nat_access` optional), an
+  `aws_db_subnet_group`, and `database_*` outputs.
+- **Configurable subnet sizing** — `subnet_newbits` and explicit
+  `public_/private_/database_subnet_cidrs`. The default carve is unchanged and
+  capacity limits are now checked at plan time.
+- `flow_logs_kms_key_arn` — SSE-KMS with S3 Bucket Keys on the module-managed
+  flow-log bucket. The Trivy AWS-0132 suppression is removed.
+- CloudWatch Logs as a flow-log destination
+  (`flow_logs_destination_type = "cloud-watch-logs"`), with a log group and a
+  delivery role whose trust is scoped by source account and ARN.
+- VPC endpoint policies (`interface_endpoint_options[*].policy`,
+  `s3_gateway_endpoint_policy`) and per-endpoint `private_dns_enabled`.
+
+#### `iam-roles`
+
+- `permissions_boundary_arn`, applied to every role the module creates.
+- **GitHub Actions OIDC trust** for the CI deployer (`github_oidc`): `aud`
+  pinned to `sts.amazonaws.com`, `sub` limited to listed repositories and
+  branches / tags / environments / pull requests. Works alongside or instead
+  of the cross-account principal + external ID path. Validation rejects
+  configurations that would trust any owner or carry no selector.
+- `create_github_oidc_provider` to create the account's
+  `token.actions.githubusercontent.com` provider.
+- Optional `environment`, applied as the `Environment` tag. The module was the
+  only one that could not satisfy the tagging contract the README promises;
+  the new tagging policy caught it.
+
+#### `kms`
+
+- `replica_regions` — an `aws_kms_replica_key` and alias per region, using the
+  AWS provider v6 resource-level `region` (no provider aliases for callers to
+  wire). Requires `multi_region = true`. New output `replica_key_arns`.
+- `rotation_period_in_days` (90–2560); unset keeps the AWS default of 365.
+
+#### `s3-secure`
+
+- `object_lock` — GOVERNANCE / COMPLIANCE default retention. Enabled through
+  `aws_s3_bucket_object_lock_configuration`, so existing buckets are not
+  replaced; requires versioning.
+- `replication` to an existing bucket (same- or cross-region), with a
+  least-privilege role unless `role_arn` is given; SSE-KMS objects included
+  automatically. New output `replication_role_arn`.
+- `enable_eventbridge_notifications` and `intelligent_tiering`
+  (Archive 90–730 days, Deep Archive 180–730 days).
+
+#### `state-backend`
+
+- `enable_dynamodb_lock` (default `true`). When `false`, no table is created
+  and `backend_config_hcl` emits `use_lockfile = true` (S3-native locking,
+  Terraform ≥ 1.10). **Default flips at 1.0**
+  ([ADR 0006](docs/adr/0006-s3-native-state-locking.md)).
+- `access_logging` and `replication` for state DR. Replication never copies
+  delete markers. New output `replication_role_arn`.
+
+#### Docs
+
+- [`docs/adr/`](docs/adr/) — architecture decision records for the choices
+  that shape the library.
+- [`docs/upgrading.md`](docs/upgrading.md) — opt-in flags, the 1.0 default
+  flips, and state moves.
+
+### Changed
+
+- `examples/full-stack` now uses the database subnet tier, an RDS-managed
+  master password, a rule-less default security group, the Pod Identity agent
+  add-on, and the `STANDARD` EKS upgrade policy.
+- `state-backend.lock_table_name` is optional; it is required only when
+  `enable_dynamodb_lock = true`.
+- Resource addresses that gained a `count` (`eks` OIDC provider, `rds` master
+  password and secret, `state-backend` lock table) migrate via `moved` blocks
+  with no action needed.
+
 ## [0.3.0] - 2026-08-23
 
 Two things at once: the module work that had been sitting unreleased, and a

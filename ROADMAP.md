@@ -25,8 +25,8 @@ are on, and breaking changes require a major bump.
 | `v0.1.0` | Initial five modules | Released |
 | `v0.2.0` | KMS + state-backend, EKS access entries, multi-NG, tests | Released |
 | `v0.2.1` | tflint fix in the full-stack example | Released |
-| **`v0.3.0`** | **Foundation: linting, scanning, release + docs enforcement** | **Ready to tag** |
-| `v0.4.0` | Module hardening | Planned |
+| `v0.3.0` | Foundation: linting, scanning, release + docs enforcement | Released |
+| **`v0.4.0`** | **Module hardening + policy-as-code** | **Ready to tag** |
 | `v0.5.0` | Surface expansion | Planned |
 | `v1.0.0` | Contract freeze | Planned |
 
@@ -93,89 +93,92 @@ Every item is additive and opt-in. Defaults do not change until `v1.0.0`.
 
 ### `rds`
 
-- [ ] **`manage_master_password`** → RDS-native `manage_master_user_password`
+- [x] **`manage_master_password`** → RDS-native `manage_master_user_password`
       with `master_user_secret_kms_key_id`. Today the module generates the
       password with `random_password` and writes it to a module-managed Secrets
       Manager secret, which puts the plaintext password in Terraform state. The
       native path never does. New output `master_user_secret_arn`;
       `master_password` returns `null` in managed mode. **Default flips at 1.0.**
-- [ ] `ca_cert_identifier`, `copy_tags_to_snapshot`,
+- [x] `ca_cert_identifier`, `copy_tags_to_snapshot`,
       `iam_database_authentication_enabled`, `apply_immediately`,
       `blue_green_update`.
-- [ ] Optional CloudWatch alarms (CPU, free storage, connection count) behind
+- [x] Optional CloudWatch alarms (CPU, free storage, connection count) behind
       `create_cloudwatch_alarms`.
 
 ### `eks`
 
-- [ ] **EKS Pod Identity** — `pod_identity_associations` →
+- [x] **EKS Pod Identity** — `pod_identity_associations` →
       `aws_eks_pod_identity_association`, plus `eks-pod-identity-agent` in the
       documented add-on set. The module supports only IRSA today; Pod Identity is
       the current AWS-recommended pattern and does not require an OIDC provider
       per cluster.
-- [ ] `create_oidc_provider` toggle, so IRSA can be switched off entirely when
+- [x] `create_oidc_provider` toggle, so IRSA can be switched off entirely when
       running Pod Identity.
-- [ ] Add-on passthrough for `service_account_role_arn` and
+- [x] Add-on passthrough for `service_account_role_arn` and
       `configuration_values`.
-- [ ] `upgrade_policy` (STANDARD / EXTENDED) and `zonal_shift_config`.
+- [x] `upgrade_policy` (STANDARD / EXTENDED) and `zonal_shift_config`.
 
 ### `vpc`
 
-- [ ] **Lock down the default security group.** `aws_default_security_group` with
+- [x] **Lock down the default security group.** `aws_default_security_group` with
       no rules. Currently the VPC's default SG is left at AWS's default
       allow-all-from-self — a standard CIS finding.
-- [ ] **Database subnet tier** (`enable_database_subnets`) plus an
+- [x] **Database subnet tier** (`enable_database_subnets`) plus an
       `aws_db_subnet_group` output, so RDS stops sharing application private
       subnets.
-- [ ] **Configurable subnet sizing.** The CIDR carve is hardcoded to
+- [x] **Configurable subnet sizing.** The CIDR carve is hardcoded to
       `cidrsubnet(vpc_cidr, 4, i)` / `i + 8`, which silently caps at 8 AZs and
       forces /20s. Replace with `subnet_newbits` plus explicit
       `public_subnet_cidrs` / `private_subnet_cidrs` overrides.
-- [ ] **`flow_logs_kms_key_arn`** — the module-managed flow-log bucket encrypts
+- [x] **`flow_logs_kms_key_arn`** — the module-managed flow-log bucket encrypts
       with SSE-S3 and accepts no customer-managed key. Trivy flags this
       (`AWS-0132`); the suppression in `.trivyignore.yaml` carries an expiry of
       2027-02-01 so the finding returns if this slips.
-- [ ] CloudWatch Logs as an alternative flow-log destination (S3 only today).
-- [ ] VPC endpoint policies and a `private_dns_enabled` toggle.
+- [x] CloudWatch Logs as an alternative flow-log destination (S3 only today).
+- [x] VPC endpoint policies and a `private_dns_enabled` toggle.
 
 ### `iam-roles`
 
-- [ ] **`permissions_boundary_arn`** on every created role. There is no boundary
+- [x] **`permissions_boundary_arn`** on every created role. There is no boundary
       support at all today, which makes these roles unusable in accounts that
       mandate one.
-- [ ] **GitHub Actions OIDC trust** for the CI deployer role
+- [x] **GitHub Actions OIDC trust** for the CI deployer role
       (`token.actions.githubusercontent.com` with `sub` conditions on repo,
       branch, and environment), alongside the existing cross-account principal +
       external ID path.
 
 ### `s3-secure`
 
-- [ ] Object Lock (governance / compliance mode), replication configuration,
+- [x] Object Lock (governance / compliance mode), replication configuration,
       EventBridge notification toggle, intelligent-tiering.
 
 ### `kms`
 
-- [ ] `aws_kms_replica_key` when `multi_region = true`. The variable exists and
+- [x] `aws_kms_replica_key` when `multi_region = true`. The variable exists and
       sets the flag on the primary key, but there is no replica resource or
       output, so multi-region keys are only half-built.
-- [ ] Configurable `rotation_period_in_days`.
+- [x] Configurable `rotation_period_in_days`.
 
 ### `state-backend`
 
-- [ ] **`enable_dynamodb_lock` toggle.** Terraform 1.11 deprecates the S3
+- [x] **`enable_dynamodb_lock` toggle.** Terraform 1.11 deprecates the S3
       backend's `dynamodb_table` argument in favour of S3-native locking. When
       the toggle is off, the emitted `backend_config_hcl` uses
       `use_lockfile = true` and no table is created. **Default flips at 1.0.**
-- [ ] Optional access logging and replication for state DR.
+- [x] Optional access logging and replication for state DR.
 
 ### Testing
 
-- [ ] Extend every `tests/basic.tftest.hcl` with positive assertions for the new
+- [x] Extend every `tests/basic.tftest.hcl` with positive assertions for the new
       flags and negative `expect_failures` for their validations.
-- [ ] **Policy-as-code.** A `policy/` directory of Conftest/OPA rules evaluated
+- [x] **Policy-as-code.** A `policy/` directory of Conftest/OPA rules evaluated
       against `terraform show -json` plan output for each example, wired as a CI
       job. This catches security regressions that plan-only assertions miss —
       e.g. "no security group may allow 0.0.0.0/0 on port 22" as a repo-wide
-      invariant rather than a per-module assertion.
+      invariant rather than a per-module assertion. Plans run against Moto, so
+      no AWS account is involved. Planning the examples for real immediately
+      surfaced an `rds` `for_each` over computed security-group IDs that made
+      `examples/full-stack` unplannable — fixed in the same release.
 
 ---
 
@@ -197,10 +200,13 @@ a Dependabot entry, and a worked example.
 
 ## `v1.0.0` — Contract freeze
 
-- [ ] Flip the opt-in defaults from `v0.4.0` (`manage_master_password`,
-      state-backend `use_lockfile`).
+- [ ] Flip the opt-in defaults from `v0.4.0` (`rds.manage_master_password`,
+      `state-backend.enable_dynamodb_lock`,
+      `vpc.manage_default_security_group`) — tracked in
+      [`docs/upgrading.md`](docs/upgrading.md).
 - [ ] Remove the deprecated variables they replace.
-- [ ] Migration guide with `moved` blocks in `CHANGELOG.md`.
+- [ ] Migration guide in [`docs/upgrading.md`](docs/upgrading.md), with
+      `moved` blocks where addresses change.
 - [ ] Documented support policy for the frozen variable and output contract.
 
 ---
