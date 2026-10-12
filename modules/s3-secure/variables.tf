@@ -214,3 +214,148 @@ variable "extra_policy_statements" {
   description = "Additional bucket-policy statements merged in (e.g. cross-account read access)."
   default     = []
 }
+
+###############################################################################
+# Object Lock
+###############################################################################
+
+variable "object_lock" {
+  type = object({
+    mode  = string
+    days  = optional(number)
+    years = optional(number)
+  })
+  description = "Default Object Lock retention (WORM). Set exactly one of days or years. Requires versioning_enabled = true. Object Lock cannot be disabled once enabled. Null = no Object Lock."
+  default     = null
+
+  validation {
+    condition     = var.object_lock == null || contains(["GOVERNANCE", "COMPLIANCE"], try(var.object_lock.mode, ""))
+    error_message = "object_lock.mode must be one of: GOVERNANCE, COMPLIANCE."
+  }
+
+  validation {
+    condition     = var.object_lock == null || ((try(var.object_lock.days, null) == null) != (try(var.object_lock.years, null) == null))
+    error_message = "object_lock must set exactly one of days or years."
+  }
+
+  validation {
+    condition = var.object_lock == null || (
+      (try(var.object_lock.days, null) == null || try(var.object_lock.days > 0 && floor(var.object_lock.days) == var.object_lock.days, false)) &&
+      (try(var.object_lock.years, null) == null || try(var.object_lock.years > 0 && floor(var.object_lock.years) == var.object_lock.years, false))
+    )
+    error_message = "object_lock.days / object_lock.years must be positive whole numbers."
+  }
+
+  validation {
+    condition     = var.object_lock == null || var.versioning_enabled
+    error_message = "object_lock requires versioning_enabled = true."
+  }
+}
+
+###############################################################################
+# Replication
+###############################################################################
+
+variable "replication" {
+  type = object({
+    destination_bucket_arn    = string
+    storage_class             = optional(string)
+    destination_kms_key_arn   = optional(string)
+    role_arn                  = optional(string)
+    delete_marker_replication = optional(bool, false)
+  })
+  description = <<-EOT
+    Replicate every object to another bucket (same- or cross-region, same- or
+    cross-account). The destination bucket must already exist with versioning
+    enabled. role_arn = null creates a role scoped to this bucket, the
+    destination bucket, and the KMS keys involved. When the source bucket uses
+    aws:kms, destination_kms_key_arn is required. storage_class = null keeps
+    the source object's class. Requires versioning_enabled = true. Null = no
+    replication.
+  EOT
+  default     = null
+
+  validation {
+    condition     = var.replication == null || can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", try(var.replication.destination_bucket_arn, "")))
+    error_message = "replication.destination_bucket_arn must be an S3 bucket ARN (arn:aws:s3:::bucket-name)."
+  }
+
+  validation {
+    condition = var.replication == null || try(var.replication.storage_class, null) == null || contains(
+      ["STANDARD", "REDUCED_REDUNDANCY", "STANDARD_IA", "ONEZONE_IA", "INTELLIGENT_TIERING", "GLACIER", "DEEP_ARCHIVE", "GLACIER_IR"],
+      try(var.replication.storage_class, ""),
+    )
+    error_message = "replication.storage_class must be one of: STANDARD, REDUCED_REDUNDANCY, STANDARD_IA, ONEZONE_IA, INTELLIGENT_TIERING, GLACIER, DEEP_ARCHIVE, GLACIER_IR."
+  }
+
+  validation {
+    condition     = var.replication == null || try(var.replication.destination_kms_key_arn, null) == null || can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/.+$", try(var.replication.destination_kms_key_arn, "")))
+    error_message = "replication.destination_kms_key_arn must be a KMS key ARN (arn:aws:kms:<region>:<account>:key/<id>)."
+  }
+
+  validation {
+    condition     = var.replication == null || try(var.replication.role_arn, null) == null || can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$", try(var.replication.role_arn, "")))
+    error_message = "replication.role_arn must be an IAM role ARN."
+  }
+
+  validation {
+    condition     = var.replication == null || var.versioning_enabled
+    error_message = "replication requires versioning_enabled = true."
+  }
+
+  validation {
+    condition     = var.replication == null || var.sse_algorithm != "aws:kms" || try(var.replication.destination_kms_key_arn, null) != null
+    error_message = "replication.destination_kms_key_arn must be set when sse_algorithm = aws:kms (S3 requires a replica key for SSE-KMS objects)."
+  }
+}
+
+###############################################################################
+# Notifications
+###############################################################################
+
+variable "enable_eventbridge_notifications" {
+  type        = bool
+  description = "Send all bucket events to Amazon EventBridge. The module then owns the bucket's notification configuration; do not also manage SNS / SQS / Lambda notifications for this bucket elsewhere."
+  default     = false
+}
+
+###############################################################################
+# Intelligent-Tiering
+###############################################################################
+
+variable "intelligent_tiering" {
+  type = map(object({
+    enabled                  = optional(bool, true)
+    prefix                   = optional(string)
+    tags                     = optional(map(string))
+    archive_access_days      = optional(number)
+    deep_archive_access_days = optional(number)
+  }))
+  description = "Intelligent-Tiering archive configurations, keyed by configuration name. Each enables the Archive Access (90-730 days) and/or Deep Archive Access (180-730 days) tiers for objects in the INTELLIGENT_TIERING storage class, optionally filtered by prefix / tags. Empty map = none."
+  default     = {}
+
+  validation {
+    condition     = alltrue([for name in keys(var.intelligent_tiering) : can(regex("^[a-zA-Z0-9._-]{1,64}$", name))])
+    error_message = "intelligent_tiering keys must be 1-64 chars: alphanumerics, dot, underscore, or hyphen."
+  }
+
+  validation {
+    condition     = alltrue([for c in values(var.intelligent_tiering) : c.archive_access_days != null || c.deep_archive_access_days != null])
+    error_message = "Each intelligent_tiering entry must set archive_access_days, deep_archive_access_days, or both."
+  }
+
+  validation {
+    condition     = alltrue([for c in values(var.intelligent_tiering) : c.archive_access_days == null || try(c.archive_access_days >= 90 && c.archive_access_days <= 730, false)])
+    error_message = "intelligent_tiering archive_access_days must be between 90 and 730."
+  }
+
+  validation {
+    condition     = alltrue([for c in values(var.intelligent_tiering) : c.deep_archive_access_days == null || try(c.deep_archive_access_days >= 180 && c.deep_archive_access_days <= 730, false)])
+    error_message = "intelligent_tiering deep_archive_access_days must be between 180 and 730."
+  }
+
+  validation {
+    condition     = alltrue([for c in values(var.intelligent_tiering) : c.archive_access_days == null || c.deep_archive_access_days == null || try(c.deep_archive_access_days > c.archive_access_days, false)])
+    error_message = "intelligent_tiering deep_archive_access_days must be greater than archive_access_days when both are set."
+  }
+}
