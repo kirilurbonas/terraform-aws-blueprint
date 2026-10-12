@@ -28,11 +28,47 @@ locals {
 
   name_prefix = "${var.name_prefix}-${var.environment}"
 
-  use_module_managed_flow_logs_bucket = var.enable_flow_logs && var.flow_logs_s3_bucket_arn == null
+  flow_logs_to_s3                     = var.enable_flow_logs && var.flow_logs_destination_type == "s3"
+  flow_logs_to_cloudwatch             = var.enable_flow_logs && var.flow_logs_destination_type == "cloud-watch-logs"
+  use_module_managed_flow_logs_bucket = local.flow_logs_to_s3 && var.flow_logs_s3_bucket_arn == null
 
-  # Carve /20 public + /20 private subnets out of the VPC CIDR.
-  public_subnet_cidrs  = [for i in range(local.az_count) : cidrsubnet(var.vpc_cidr, 4, i)]
-  private_subnet_cidrs = [for i in range(local.az_count) : cidrsubnet(var.vpc_cidr, 4, i + 8)]
+  # Default carve: the VPC CIDR is split into 2^subnet_newbits equal blocks.
+  # Public takes the first half (index i), private the second half
+  # (i + 2^(newbits-1)). With the default newbits = 4 this is exactly the
+  # historical /20 layout: public i, private i + 8. The database tier, when
+  # enabled, takes the last quarter (i + 2^(newbits-1) + 2^(newbits-2), i.e.
+  # i + 12 at the default), which halves how many AZs the carved private tier
+  # can hold. Explicit *_subnet_cidrs lists bypass the carve for that tier.
+  #
+  # cidrsubnet() is wrapped in try() so an over-full carve surfaces as the
+  # readable precondition on aws_vpc.this rather than a raw function error.
+  private_carve_offset  = pow(2, var.subnet_newbits - 1)
+  database_carve_offset = pow(2, var.subnet_newbits - 1) + pow(2, var.subnet_newbits - 2)
+
+  database_tier_carved = var.enable_database_subnets && var.database_subnet_cidrs == null
+
+  # Max AZs each carved tier can hold without overlapping the next tier.
+  public_carve_capacity   = pow(2, var.subnet_newbits - 1)
+  private_carve_capacity  = local.database_tier_carved ? pow(2, var.subnet_newbits - 2) : pow(2, var.subnet_newbits - 1)
+  database_carve_capacity = pow(2, var.subnet_newbits - 2)
+
+  any_tier_carved = (
+    var.public_subnet_cidrs == null ||
+    var.private_subnet_cidrs == null ||
+    local.database_tier_carved
+  )
+
+  public_subnet_cidrs = var.public_subnet_cidrs != null ? var.public_subnet_cidrs : [
+    for i in range(local.az_count) : try(cidrsubnet(var.vpc_cidr, var.subnet_newbits, i), null)
+  ]
+  private_subnet_cidrs = var.private_subnet_cidrs != null ? var.private_subnet_cidrs : [
+    for i in range(local.az_count) : try(cidrsubnet(var.vpc_cidr, var.subnet_newbits, i + local.private_carve_offset), null)
+  ]
+  database_subnet_cidrs = !var.enable_database_subnets ? [] : var.database_subnet_cidrs != null ? var.database_subnet_cidrs : [
+    for i in range(local.az_count) : try(cidrsubnet(var.vpc_cidr, var.subnet_newbits, i + local.database_carve_offset), null)
+  ]
+
+  database_subnet_count = var.enable_database_subnets ? local.az_count : 0
 
   nat_gateway_count = var.enable_nat_gateway ? (var.nat_gateway_mode == "per_az" ? local.az_count : 1) : 0
 }
@@ -48,6 +84,84 @@ resource "aws_vpc" "this" {
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-vpc"
+  })
+
+  # Cross-variable input checks. They live here because aws_vpc.this is the
+  # one resource that always exists, and variable validation blocks may not
+  # reference other variables on the Terraform versions this module supports.
+  lifecycle {
+    precondition {
+      condition     = !local.any_tier_carved || tonumber(split("/", var.vpc_cidr)[1]) + var.subnet_newbits <= 28
+      error_message = "vpc_cidr prefix length + subnet_newbits must be <= 28 (AWS's smallest subnet is a /28)."
+    }
+
+    precondition {
+      condition     = var.public_subnet_cidrs != null || local.az_count <= local.public_carve_capacity
+      error_message = "Too many availability_zones for the default public carve at this subnet_newbits (capacity is 2^(subnet_newbits-1)). Lower the AZ count, raise subnet_newbits, or pass public_subnet_cidrs."
+    }
+
+    precondition {
+      condition     = var.private_subnet_cidrs != null || local.az_count <= local.private_carve_capacity
+      error_message = "Too many availability_zones for the default private carve at this subnet_newbits (capacity is 2^(subnet_newbits-1), or 2^(subnet_newbits-2) when the database tier is carved too). Lower the AZ count, raise subnet_newbits, or pass private_subnet_cidrs."
+    }
+
+    precondition {
+      condition     = !local.database_tier_carved || local.az_count <= local.database_carve_capacity
+      error_message = "Too many availability_zones for the default database carve at this subnet_newbits (capacity is 2^(subnet_newbits-2)). Lower the AZ count, raise subnet_newbits, or pass database_subnet_cidrs."
+    }
+
+    precondition {
+      condition     = var.public_subnet_cidrs == null ? true : length(var.public_subnet_cidrs) == local.az_count
+      error_message = "public_subnet_cidrs must have exactly one entry per availability zone."
+    }
+
+    precondition {
+      condition     = var.private_subnet_cidrs == null ? true : length(var.private_subnet_cidrs) == local.az_count
+      error_message = "private_subnet_cidrs must have exactly one entry per availability zone."
+    }
+
+    precondition {
+      condition     = var.database_subnet_cidrs == null ? true : (var.enable_database_subnets && length(var.database_subnet_cidrs) == local.az_count)
+      error_message = "database_subnet_cidrs requires enable_database_subnets = true and must have exactly one entry per availability zone."
+    }
+
+    precondition {
+      condition     = !var.database_subnets_nat_access || (var.enable_database_subnets && var.enable_nat_gateway)
+      error_message = "database_subnets_nat_access requires enable_database_subnets = true and enable_nat_gateway = true."
+    }
+
+    precondition {
+      condition     = length(setsubtract(keys(var.interface_endpoint_options), var.interface_endpoints)) == 0
+      error_message = "Every key in interface_endpoint_options must also be listed in interface_endpoints."
+    }
+
+    precondition {
+      condition     = !local.flow_logs_to_cloudwatch || var.flow_logs_s3_bucket_arn == null
+      error_message = "flow_logs_s3_bucket_arn cannot be set when flow_logs_destination_type = \"cloud-watch-logs\"."
+    }
+
+    precondition {
+      condition     = var.flow_logs_kms_key_arn == null || !var.enable_flow_logs || local.use_module_managed_flow_logs_bucket
+      error_message = "flow_logs_kms_key_arn only applies to the module-managed S3 bucket; it cannot be combined with flow_logs_s3_bucket_arn or the cloud-watch-logs destination. Use flow_logs_cloudwatch_kms_key_arn for CloudWatch Logs."
+    }
+  }
+}
+
+###############################################################################
+# Default security group
+#
+# Declaring aws_default_security_group with no ingress/egress blocks strips
+# every rule from the VPC's default SG (AWS ships it allowing all traffic from
+# itself), so nothing attached to it by accident can talk. Opt-in until v1.0.
+###############################################################################
+
+resource "aws_default_security_group" "this" {
+  count = var.manage_default_security_group ? 1 : 0
+
+  vpc_id = aws_vpc.this.id
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-default-sg"
   })
 }
 
@@ -93,6 +207,31 @@ resource "aws_subnet" "private" {
     Name                              = "${local.name_prefix}-private-${var.availability_zones[count.index]}"
     Tier                              = "private"
     "kubernetes.io/role/internal-elb" = "1"
+  })
+}
+
+resource "aws_subnet" "database" {
+  count = local.database_subnet_count
+
+  vpc_id            = aws_vpc.this.id
+  cidr_block        = local.database_subnet_cidrs[count.index]
+  availability_zone = var.availability_zones[count.index]
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-database-${var.availability_zones[count.index]}"
+    Tier = "database"
+  })
+}
+
+resource "aws_db_subnet_group" "database" {
+  count = var.enable_database_subnets && var.create_database_subnet_group ? 1 : 0
+
+  name        = "${local.name_prefix}-database"
+  description = "Database subnets for ${local.name_prefix}"
+  subnet_ids  = aws_subnet.database[*].id
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-database"
   })
 }
 
@@ -175,8 +314,35 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private[count.index].id
 }
 
+# Database route tables never get an internet gateway route. A NAT default
+# route is added only when database_subnets_nat_access = true.
+resource "aws_route_table" "database" {
+  count = local.database_subnet_count
+
+  vpc_id = aws_vpc.this.id
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-rt-database-${var.availability_zones[count.index]}"
+  })
+}
+
+resource "aws_route" "database_nat" {
+  count = var.enable_database_subnets && var.database_subnets_nat_access && var.enable_nat_gateway ? local.az_count : 0
+
+  route_table_id         = aws_route_table.database[count.index].id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = var.nat_gateway_mode == "per_az" ? aws_nat_gateway.this[count.index].id : aws_nat_gateway.this[0].id
+}
+
+resource "aws_route_table_association" "database" {
+  count = local.database_subnet_count
+
+  subnet_id      = aws_subnet.database[count.index].id
+  route_table_id = aws_route_table.database[count.index].id
+}
+
 ###############################################################################
-# VPC Flow Logs (-> S3)
+# VPC Flow Logs (-> S3 or CloudWatch Logs)
 ###############################################################################
 
 resource "aws_s3_bucket" "flow_logs" {
@@ -216,9 +382,15 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "flow_logs" {
   bucket = aws_s3_bucket.flow_logs[0].id
 
   rule {
+    # SSE-S3 by default; SSE-KMS with the caller's key when
+    # flow_logs_kms_key_arn is set. The key policy must allow
+    # delivery.logs.amazonaws.com to use the key (see README).
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = var.flow_logs_kms_key_arn != null ? "aws:kms" : "AES256"
+      kms_master_key_id = var.flow_logs_kms_key_arn
     }
+
+    bucket_key_enabled = var.flow_logs_kms_key_arn != null
   }
 }
 
@@ -351,26 +523,114 @@ resource "aws_s3_bucket_policy" "flow_logs" {
   depends_on = [aws_s3_bucket_public_access_block.flow_logs]
 }
 
+resource "aws_cloudwatch_log_group" "flow_logs" {
+  count = local.flow_logs_to_cloudwatch ? 1 : 0
+
+  name              = "/aws/vpc-flow-logs/${local.name_prefix}"
+  retention_in_days = var.flow_logs_cloudwatch_retention_days
+  kms_key_id        = var.flow_logs_cloudwatch_kms_key_arn
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-vpc-flow-logs"
+  })
+}
+
+data "aws_iam_policy_document" "flow_logs_cloudwatch_assume" {
+  count = local.flow_logs_to_cloudwatch ? 1 : 0
+
+  statement {
+    sid     = "AllowVPCFlowLogsAssume"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["vpc-flow-logs.amazonaws.com"]
+    }
+
+    # Confused-deputy protection: only flow logs in this account and region.
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:${data.aws_partition.current.partition}:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:vpc-flow-log/*"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "flow_logs_cloudwatch" {
+  count = local.flow_logs_to_cloudwatch ? 1 : 0
+
+  # Scoped to the one module-managed log group and its streams.
+  statement {
+    sid    = "AllowFlowLogDelivery"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogGroups",
+      "logs:DescribeLogStreams",
+    ]
+    resources = [
+      aws_cloudwatch_log_group.flow_logs[0].arn,
+      "${aws_cloudwatch_log_group.flow_logs[0].arn}:*",
+    ]
+  }
+}
+
+resource "aws_iam_role" "flow_logs_cloudwatch" {
+  count = local.flow_logs_to_cloudwatch ? 1 : 0
+
+  name_prefix        = "${local.name_prefix}-vpc-flow-logs-"
+  assume_role_policy = data.aws_iam_policy_document.flow_logs_cloudwatch_assume[0].json
+
+  tags = merge(local.common_tags, {
+    Name = "${local.name_prefix}-vpc-flow-logs"
+  })
+}
+
+resource "aws_iam_role_policy" "flow_logs_cloudwatch" {
+  count = local.flow_logs_to_cloudwatch ? 1 : 0
+
+  name_prefix = "${local.name_prefix}-vpc-flow-logs-"
+  role        = aws_iam_role.flow_logs_cloudwatch[0].id
+  policy      = data.aws_iam_policy_document.flow_logs_cloudwatch[0].json
+}
+
 resource "aws_flow_log" "this" {
   count = var.enable_flow_logs ? 1 : 0
 
-  log_destination          = var.flow_logs_s3_bucket_arn != null ? var.flow_logs_s3_bucket_arn : aws_s3_bucket.flow_logs[0].arn
-  log_destination_type     = "s3"
+  log_destination = (
+    local.flow_logs_to_cloudwatch ? aws_cloudwatch_log_group.flow_logs[0].arn :
+    var.flow_logs_s3_bucket_arn != null ? var.flow_logs_s3_bucket_arn : aws_s3_bucket.flow_logs[0].arn
+  )
+  log_destination_type     = var.flow_logs_destination_type
+  iam_role_arn             = local.flow_logs_to_cloudwatch ? aws_iam_role.flow_logs_cloudwatch[0].arn : null
   traffic_type             = "ALL"
   vpc_id                   = aws_vpc.this.id
   max_aggregation_interval = 60
 
-  destination_options {
-    file_format                = var.flow_logs_file_format
-    hive_compatible_partitions = var.flow_logs_hive_compatible_partitions
-    per_hour_partition         = var.flow_logs_per_hour_partition
+  # destination_options is S3-only.
+  dynamic "destination_options" {
+    for_each = local.flow_logs_to_s3 ? [1] : []
+
+    content {
+      file_format                = var.flow_logs_file_format
+      hive_compatible_partitions = var.flow_logs_hive_compatible_partitions
+      per_hour_partition         = var.flow_logs_per_hour_partition
+    }
   }
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-vpc-flow-logs"
   })
 
-  depends_on = [aws_s3_bucket_policy.flow_logs]
+  depends_on = [aws_s3_bucket_policy.flow_logs, aws_iam_role_policy.flow_logs_cloudwatch]
 }
 
 ###############################################################################
@@ -418,7 +678,8 @@ resource "aws_vpc_endpoint" "s3_gateway" {
   vpc_id            = aws_vpc.this.id
   service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = aws_route_table.private[*].id
+  route_table_ids   = concat(aws_route_table.private[*].id, aws_route_table.database[*].id)
+  policy            = var.s3_gateway_endpoint_policy
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-vpce-s3"
@@ -433,7 +694,8 @@ resource "aws_vpc_endpoint" "interface" {
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
-  private_dns_enabled = true
+  private_dns_enabled = try(var.interface_endpoint_options[each.value].private_dns_enabled, true)
+  policy              = try(var.interface_endpoint_options[each.value].policy, null)
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-vpce-${each.value}"
